@@ -1,0 +1,24 @@
+# Compiled Object files
+*.slo
+*.lo
+*.o
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+
+# Compiled python files
+*.pyc
+python/build
+python/dist
+python/chisel.egg-info/
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+
+.*.swp
+
+# Reminders
+reminder

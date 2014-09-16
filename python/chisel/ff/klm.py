@@ -10,7 +10,7 @@ LM features with KenLM.
 
 @author waziz
 """
-import ff
+import chisel
 import kenlm
 import collections
 import sys
@@ -18,23 +18,23 @@ import sys
 model = None
 suffstats = None
 
-@ff.configure
+@chisel.ff.configure
 def configure(config):
     global model
     model = kenlm.LanguageModel(config['KLanguageModel'])
 
-@ff.suffstats
+@chisel.ff.suffstats
 def full_scores(hypothesis):
     """full_scores(hypothesis) -> compute full scores for each ngram"""
     global suffstats
     suffstats = tuple(model.full_scores(hypothesis.translation_))
 
-@ff.cleanup
+@chisel.ff.cleanup
 def cleanup():
     global suffstats
     suffstats = None
 
-@ff.features('LanguageModel', 'LanguageModel_OOV')
+@chisel.ff.features('LanguageModel', 'LanguageModel_OOV')
 def KLanguageModel(hypothesis):
     total_prob = 0
     total_oov = 0
@@ -43,7 +43,7 @@ def KLanguageModel(hypothesis):
         total_oov += oov
     return (total_prob, total_oov)
 
-@ff.sparse
+@chisel.ff.sparse
 def NGramOrder(hypothesis):
     counter = collections.Counter(length for prob, length, oov in suffstats)
     return counter.iteritems()

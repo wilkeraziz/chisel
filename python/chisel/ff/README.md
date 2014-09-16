@@ -3,16 +3,16 @@
 This framework is based on cdec's.
 To add a new feature function, simply implement your idea using this very simple guidelines:
 
-1. Import from `ff`
+1. Import the interface
 	
 	```python
-	import ff
+	import chisel
 	```
 
 2. Configure your extractor
 
 	```python
-	@ff.configure
+	@chisel.ff.configure
 	def thisMethodConfiguresMyNewFeature(config):
     	"""
 	    config is a dictionary containing the strings parsed from chisel's config.ini
@@ -24,7 +24,7 @@ To add a new feature function, simply implement your idea using this very simple
 3. Implement your features
 
 	```python
-	@ff.dense
+	@chisel.ff.dense
 	def MyFeature(hypothesis):
     	"""
 	    hypothesis contains the input and the translation
@@ -33,7 +33,7 @@ To add a new feature function, simply implement your idea using this very simple
     	"""
 	    return 0.0
 	
-	@ff.features('MyF1', 'MyF2')
+	@chisel.ff.features('MyF1', 'MyF2')
 	def MyFeatures(hypothesis):
     	"""
 	    this function must return 2 real values 
@@ -42,7 +42,7 @@ To add a new feature function, simply implement your idea using this very simple
     	"""
 	    return (0.0, 0.0)
 
-	@ff.sparse
+	@chisel.ff.sparse
 	def MySparse(hypothesis):
     	"""
 	    this function must return a list of named feature values (i.e. pairs of the kind (suffix, fvalue))
