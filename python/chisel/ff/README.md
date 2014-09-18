@@ -1,6 +1,5 @@
 # Feature Functions
 
-This framework is based on cdec's.
 To add a new feature function, simply implement your idea using this very simple guidelines:
 
 1. Import the interface
@@ -51,4 +50,19 @@ To add a new feature function, simply implement your idea using this very simple
     	return (('v1',0.0) , ('v2', 0.0))
 	```
 
-4. Optimising a bit with suffstats and cleanup
+4. If you have a scorer that produces multiple features (perhaps some are dense and some are sparse) which share an underlying computation, you can optimise things quite a bit with `suffstats` and `cleanup`.
+	```python
+	my_suffstats = None
+	
+	# this will get called before the scorers
+	@chisel.ff.suffstats
+	def MyUnderlyingComputation(hypothesis):
+		global my_suffstats
+		my_suffstats = some_computation(hypothesis)
+	
+	# this will get called after the scorers
+	@chisel.ff.cleanup
+	def CleaningAfterMyScorer():
+		global my_suffstats
+		my_suffstats = None
+	```
