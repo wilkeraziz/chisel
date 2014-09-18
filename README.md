@@ -21,17 +21,17 @@ I recommend you use virtualenv
 
 * kenlm
 
-        source chiselenv/bin/activate
         git clone https://github.com/wilkeraziz/kenlm.git 
+        source chiselenv/bin/activate
         python setup.py install
 
 * cdec
 
-        source chiselenv/bin/activate
         git clone https://github.com/wilkeraziz/cdec.git 
         autoreconf -ifv
         ./configure
         make
+        source chiselenv/bin/activate
         cd python
         python setup.py install
 
@@ -49,3 +49,8 @@ We are still preparing our paper, so please be kind and wait a bit ;)
 
 `chisel` is developed by Wilker Aziz at the University of Sheffield.
 
+## License
+
+Copyright (C) 2014 Wilker Aziz
+
+Licensed under the Apache License Version 2.0.

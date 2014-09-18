@@ -16,9 +16,14 @@ import math
 
 from io_utils import read_config, read_weights, SegmentMetaData, fmap2str, str2fmap
 
-def build_proxy(input_str, grammar_file, weights_file, scaling):
-    
-    decoder = cdec.Decoder(formalism='scfg', intersection_strategy='Full', add_pass_through_rules='true', feature_function='WordPenalty')
+def build_proxy(input_str, grammar_file, weights_file, scaling, cdec_ini):
+   
+    with open(cdec_ini) as f:
+        config_str = f.read()
+        logging.info('cdec.ini:\n\t%s', '\n\t'.join(config_str.strip().split('\n')))
+        # perhaps make sure formalism=scfg and intersection_strategy=full?
+        #decoder = cdec.Decoder(config_str=config_str, formalism='scfg', intersection_strategy='Full')
+        decoder = cdec.Decoder(config_str=config_str)
 
     logging.info('Loading weights: %s', weights_file)
     decoder.read_weights(weights_file, scaling)
@@ -52,7 +57,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description = 'MC sampler for hiero models')
     parser.add_argument("proxy", type=str, help="feature weights (proxy model)")
     parser.add_argument("target", type=str, help="feature weights (target model)")
-    parser.add_argument("config", type=str, help="config file")
+    parser.add_argument("chisel", type=str, help="chisel's config file")
+    parser.add_argument("cdec", type=str, help="cdec's config file")
     parser.add_argument("--scaling", type=float, default = 1.0, help = "scaling parameter for the model") 
     parser.add_argument("--samples", type=int, default = 100, help = "number of samples") 
     parser.add_argument("--top", type=int, default = 10, help = "Top n MBR solutions") 
@@ -67,7 +73,8 @@ if __name__ == '__main__':
     extra_features = {k:v for k, v in target_weights.iteritems() if k not in proxy_weights}
     logging.info('Extra features: %s', extra_features)
 
-    config = read_config(options.config)
+    config = read_config(options.chisel)
+    logging.info('chisel.ini: %s', config)
     ff.load_features(options.features)
     resources = ff.configure_features(config)
 
@@ -75,7 +82,7 @@ if __name__ == '__main__':
         # parses input format
         segment = SegmentMetaData.parse(line.strip(), options.input_format)
         # builds the proxy distribution
-        forest = build_proxy(segment.src_, segment.grammar_, options.proxy, options.scaling)
+        forest = build_proxy(segment.src_, segment.grammar_, options.proxy, options.scaling, options.cdec)
         # samples from the proxy distribution
         samples = sample(forest, options.samples)
         header = '\t'.join(['#count', '#translation', '#r', '#qmap', '#qdot', '#pmap', '#pdot'])

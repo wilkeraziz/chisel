@@ -97,15 +97,15 @@ def compute_features(hypothesis):
     # 2) evaluate scorers
     pairs = []
     #  a) all single features (return 1 real value)
-    pairs.extend((fname, func(hypothesis)) for func, fname in _SINGLE_)
+    pairs.extend((fname, fvalue) for fname, fvalue in ((fname, func(hypothesis)) for func, fname in _SINGLE_) if fvalue)
     #  b) all multiple dense features (return a list of pairs (fname, fvalue))
     for func, fnames in _MULTIPLE_DENSE_:
         fvalues = func(hypothesis)
         assert len(fnames) == len(fvalues), 'expected %d features, found %d' % (len(fnames), len(fvalues))
-        pairs.extend(itertools.izip(fnames, fvalues))
+        pairs.extend((fname, fvalue) for fname, fvalue in itertools.izip(fnames, fvalues) if fvalue)
     #  c) all sparse features (return a list of pair (fsuffix, fvalue))
     for func, fprefix in _SPARSE_:
-        pairs.extend(('{0}_{1}'.format(fprefix, fsuffix), fvalue) for fsuffix, fvalue in func(hypothesis))
+        pairs.extend(('{0}_{1}'.format(fprefix, fsuffix), fvalue) for fsuffix, fvalue in func(hypothesis) if fvalue)
     # 3) give ffs the chance to clean up
     [func() for func in _CLEANUP_]
     
