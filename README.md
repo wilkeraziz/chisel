@@ -18,11 +18,11 @@ I have added a few features to some of the dependencies below, these changes mig
 I recommend you use virtualenv
 
     virtualenv chiselenv
+    source chiselenv/bin/activate
 
 * kenlm
 
         git clone https://github.com/wilkeraziz/kenlm.git 
-        source chiselenv/bin/activate
         python setup.py install
 
 * cdec
@@ -31,15 +31,16 @@ I recommend you use virtualenv
         autoreconf -ifv
         ./configure
         make
-        source chiselenv/bin/activate
         cd python
         python setup.py install
 
 * jieba
 
-        source chiselenv/bin/activate
         pip install jieba
 
+* chisel
+
+        python setup.py install
 
 ## Citation
 

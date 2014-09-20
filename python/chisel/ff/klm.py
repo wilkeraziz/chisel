@@ -1,12 +1,22 @@
 """
-LM features with KenLM.
-* these features require configuration (the path to the LM to be loaded)
-* we use suffstats to query KenLM for the full scores 
-* we use cleanup to clean after suffstats
-* we define a few features
-    * LanguageModel is the conditional p(w|context)
-    * LanguageModel_OOV is the number of OOV words
-    * NGramOrder_k where 1 <= k <= max_order is the number of in-vocab k-grams
+n-gram LM features with KenLM.
+
+Usage:
+
+* this module requires configuration (via chisel.ini)
+    
+        KLanguageModel=<path to trained model>
+
+* the following features are defined
+
+    1. LanguageModel is the LM log-probability of the sentence
+    2. LanguageModel_OOV is the number of OOV words
+    3. NGramOrder_k where 1 <= k <= max_order is the number of in-vocab k-grams
+
+Implementation details:
+
+* @chisel.ff.suffstats is used to query KenLM for the full scores before computing specific features
+* @chisel.ff.cleanup is used to clean after suffstats
 
 @author waziz
 """
@@ -47,3 +57,6 @@ def KLanguageModel(hypothesis):
 def NGramOrder(hypothesis):
     counter = collections.Counter(length for prob, length, oov in suffstats)
     return counter.iteritems()
+
+if __name__ == '__main__':
+    print __doc__

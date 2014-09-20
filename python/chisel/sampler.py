@@ -12,7 +12,6 @@ import numpy as np
 import re
 import ff 
 import math
-#import decision
 
 from io_utils import read_config, read_weights, SegmentMetaData, fmap2str, str2fmap
 
@@ -59,12 +58,18 @@ if __name__ == '__main__':
     parser.add_argument("target", type=str, help="feature weights (target model)")
     parser.add_argument("chisel", type=str, help="chisel's config file")
     parser.add_argument("cdec", type=str, help="cdec's config file")
-    parser.add_argument("--scaling", type=float, default = 1.0, help = "scaling parameter for the model") 
-    parser.add_argument("--samples", type=int, default = 100, help = "number of samples") 
-    parser.add_argument("--top", type=int, default = 10, help = "Top n MBR solutions") 
+    parser.add_argument("--scaling", type=float, default = 1.0, help = "scaling parameter for the model (default: 1.0)") 
+    parser.add_argument("--samples", type=int, default = 100, help = "number of samples (default: 100)") 
     parser.add_argument('-f', "--features", action='append', default = [], help = "additional feature definitions") 
-    parser.add_argument("--input-format", type=str, default='chisel', help="chisel (tab-separated columns: grammar source), cdec (sgml), moses (|||-separated columns: grammar source)")
+    parser.add_argument("--input-format", type=str, default='plain', help="'plain': one input sentence per line and requires --grammars (default option); 'chisel': tab-separated columns [grammar source]; 'cdec': sgml-formatted; 'moses': |||-separated columns [grammar source]")
+    parser.add_argument("--grammars", type=str, help = "where to find grammars (grammar files are expected to be named grammar.$i.sgm, with $i 0-based)") 
+    #parser.add_argument("--top", type=int, default = 10, help = "Top n MBR solutions") 
     options = parser.parse_args()
+
+    # sanity checks
+    if options.input_format == 'plain' and options.grammars is None:
+        logging.error("'--input-format plain' requires '--grammars <path>'")
+        sys.exit()
 
     logging.basicConfig(level = logging.INFO, format = '%(levelname)s %(message)s') 
     
@@ -78,9 +83,10 @@ if __name__ == '__main__':
     ff.load_features(options.features)
     resources = ff.configure_features(config)
 
-    for line in sys.stdin:
+    for sid, line in enumerate(sys.stdin):
         # parses input format
-        segment = SegmentMetaData.parse(line.strip(), options.input_format)
+        segment = SegmentMetaData.parse(sid, line.strip(), options.input_format, options.grammars)
+        logging.info('Translating: %s', segment.src)
         # builds the proxy distribution
         forest = build_proxy(segment.src_, segment.grammar_, options.proxy, options.scaling, options.cdec)
         # samples from the proxy distribution

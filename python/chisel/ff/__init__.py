@@ -13,6 +13,7 @@ import logging
 import sys
 import os
 import itertools
+import importlib
 
 _SINGLE_ = [] # (func, fname)
 _MULTIPLE_DENSE_ = [] # (func, fnames)
@@ -78,12 +79,23 @@ def sparse(scorer):
     return scorer
 
 def load_features(features):
-    for featdef in features:
-        logging.info('Loading additional feature definitions from %s', featdef)
-        prefix = os.path.dirname(featdef)
-        sys.path.append(prefix)
-        __import__(os.path.basename(featdef).replace('.py', ''))
-        sys.path.remove(prefix)
+    for fdef in features:
+        if os.path.isfile(fdef):
+            try:
+                logging.info('Loading additional feature definitions from file %s', fdef)
+                prefix = os.path.dirname(fdef)
+                sys.path.append(prefix)
+                __import__(os.path.basename(fdef).replace('.py', ''))
+                sys.path.remove(prefix)
+            except:
+                logging.error('Could not load feature definitions from file %s', fdef)
+        else:
+            try:
+                logging.info('Loading additional feature definitions from module %s', fdef)
+                importlib.import_module(fdef)
+            except:
+                logging.error('Could not load feature defitions from module %s', fdef)
+
 
 def configure_features(config):
     [func(config) for func in _CONFIGURE_]
