@@ -66,3 +66,17 @@ To add a new feature function, simply implement your idea using this very simple
 		global my_suffstats
 		my_suffstats = None
 	```
+
+5. Documentation is important! Thus make sure you start your module with an informative `docstring` telling others how to configure your module and what it produces exactly. If necessary, give some information about the design of your module. Finally, print your `docstring` on the screen in case your module is called as a main program.
+    ```python
+    if __name__ == '__main__':
+        print __doc__
+    ```
+
+## Getting help
+
+The idea is that each module is independent, so they should also contain documentation. Well-written modules will give you a nice help message if run from the command line. 
+
+Test the following:
+
+		python -m chisel.ff.klm

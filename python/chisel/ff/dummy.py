@@ -37,3 +37,5 @@ def Dummy2(hypothesis):
 def Dummy(hypothesis): 
     return ('v1', 1), ('v2', 0.5), ('v5', -1)
     
+if __name__ == '__main__':
+    print __doc__

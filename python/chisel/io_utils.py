@@ -3,6 +3,7 @@
 """
 import gzip
 import re
+from os.path import isfile
 
 def read_config(path):
     config = {}
@@ -35,44 +36,70 @@ class SegmentMetaData(object):
     A simple container for input segments
     """
 
-    def __init__(self, src, grammar, tgt = '', alignment = []):
+    def __init__(self, sid, src, grammar, tgt = '', alignment = []):
+        self.sid_ = sid
         self.grammar_ = grammar
         self.src_ = src
         self.tgt_ = tgt
         self.alignment_ = tuple(alignment)
 
+    @property
+    def src(self):
+        return self.src_
+
+    @property
+    def grammar(self):
+        return self.grammar_
+
     def __str__(self):
         return 'grammar=%s\tsrc=%s' % (self.grammar_, self.src_)
 
     @staticmethod
-    def parse(line, mode):
-        if mode == 'cdec':
-            return parse_cdec_sgml(line)
-        if mode == 'moses':
-            return parse_moses_columns(line)
-        if mode == 'chisel':
-            return parse_chisel_columns(line)
-        raise Exception('unknown input format: %s' % mode)
+    def parse(sid, line, mode, grammar = None):
+        # parse line
+        if mode == 'plain':
+            data = parse_plain(line)
+        elif mode == 'cdec':
+            data = parse_cdec_sgml(line)
+        elif mode == 'moses':
+            data = parse_moses_columns(line)
+        elif mode == 'chisel':
+            data = parse_chisel_columns(line)
+        else:
+            raise Exception('unknown input format: %s' % mode)
+        # overrides
+        if grammar is not None:
+            data['grammar'] = '{0}/grammar.{1}.gz'.format(grammar, sid)
+        # sanity checks
+        if not isfile(data['grammar']):
+            raise Exception('Grammar file not found: %s' % data['grammar'])
+        # construct segment
+        return SegmentMetaData(sid, data['src'], data['grammar'], data.get('tgt', ''), data.get('alignment', []))
+
+def parse_plain(plain_str):
+    fields = plain_str.split(' ||| ')
+    return {'src':fields[0].strip()}
 
 def parse_chisel_columns(chisel_str):
     columns = chisel_str.split('\t')
     if len(columns) < 2:
         raise Exception('missing fields: %s' % columns)
-    return SegmentMetaData(src=columns[1], grammar=columns[0])
+    return {'src':columns[1], 'grammar':columns[0]}
 
 def parse_moses_columns(moses_str):
     columns = [token.strip() for token in moses_str.split('|||')]
     if len(columns) < 2:
         raise Exception('missing fields: %s' % columns)
-    return SegmentMetaData(src=columns[1], grammar=columns[0])
+    return {'src':columns[1], 'grammar':columns[0]}
 
 def parse_cdec_sgml(sgml_str):
     """parses an sgml-formatted line as cdec would
     returns a dicts with grammar, id, src and tgt"""
-    pattern = re.compile('<seg grammar="([^"]+)" id="([0-9]+)">(.+)<\/seg> [|]{3} (.+)')
+    #pattern = re.compile('<seg grammar="([^"]+)" id="([0-9]+)">(.+)<\/seg> [|]{3} (.+)')
+    pattern = re.compile('<seg grammar="([^"]+)" id="([0-9]+)">(.+)<\/seg>')
     match = pattern.match(sgml_str)
     groups = match.groups()
-    if len(groups) != 4:
+    if len(groups) < 3:
         raise Exception('missing fields: %s' % groups)
-    return SegmentMetaData(grammar = groups[0], src = groups[2], tgt = groups[3])
+    return {'grammar':groups[0], 'sid':groups[1], 'src':groups[2]}
 

@@ -40,6 +40,9 @@ I recommend you use virtualenv
         source chiselenv/bin/activate
         pip install jieba
 
+* chisel
+
+        python setup.py install
 
 ## Citation
 

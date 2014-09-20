@@ -1,5 +1,17 @@
 """
-Feature functions that capture information about the length of a complete hypothesis.
+Length features: capture information about the length (in number of tokens) of a complete hypothesis.
+
+Usage:
+
+    * this module requires no configuration
+
+    * the following features are defined
+
+        1. FLength: len(source)
+        2. ELength: len(target)
+        3. LengthRatio: len(target) / len(source) (with no sanity checks)
+        4. LengthDiff: len(target) - len(source)
+        5. AbsLenDiff: abs(len(target) - len(source))
 
 @author waziz
 """
@@ -17,3 +29,5 @@ def AbsLenDiff(hypothesis):
     f, e = hypothesis.source_.split(), hypothesis.translation_.split()
     return abs(len(e) - len(f))
 
+if __name__ == '__main__':
+    print __doc__
