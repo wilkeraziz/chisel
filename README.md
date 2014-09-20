@@ -12,6 +12,7 @@ I have added a few features to some of the dependencies below, these changes mig
 * kenlm
 * cdec 
 * jieba (for Chinese segmentation)
+* numpy
 
 ## Installing
 
@@ -37,6 +38,10 @@ I recommend you use virtualenv
 * jieba
 
         pip install jieba
+
+* numpy
+
+        pip install numpy
 
 * chisel
 
