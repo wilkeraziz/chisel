@@ -31,13 +31,15 @@ suffstats = None
 @chisel.ff.configure
 def configure(config):
     global model
+    if 'KLanguageModel' not in config:
+        raise Exception('Perhaps you forgot to configure `KLanguageModel=<path to LM>` in your chisel.ini file?')
     model = kenlm.LanguageModel(config['KLanguageModel'])
 
 @chisel.ff.suffstats
 def full_scores(hypothesis):
     """full_scores(hypothesis) -> compute full scores for each ngram"""
     global suffstats
-    suffstats = tuple(model.full_scores(hypothesis.translation_))
+    suffstats = tuple(model.full_scores(hypothesis.tgt))
 
 @chisel.ff.cleanup
 def cleanup():

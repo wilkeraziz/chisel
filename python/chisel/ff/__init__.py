@@ -1,11 +1,23 @@
 """
 Decorators for feature function definitions.
-To create a new feature function simply:
-    1) import ff
-    2) use @configure in order to load pre-trained models and parameters
-    3) use @feature to define a new feature which returns a single value 
-    4) use @features('f1', 'f2', ..., 'fn') to define a function which returns a list of n feature values
-    the arguments of the decoration are the feature names
+
+Let's agree on some terminology. I'm going to call your module a `scorer`. 
+A scorer module can define one or more `feature functions`.
+A feature has a `name` and a `value`. Feature names are strings and feature values are real-valued numbers.
+
+To create a new feature functions simply:
+    1) create your scorer module (e.g. my_scorer.py) and import `chisel.ff`
+    2) use @chisel.ff.configure in order to load pre-trained models and parameters
+    3) use @chisel.ff.preprocess in order to pre-process an input segment (e.g. parse the input)
+       in this case you probably want to use @chisel.ff.reset in order to reset your scorer to a null state after finishing decoding a sentence
+    4) use @chisel.ff.suffstats in order to pre-process a translation (e.g. parse the output)
+       in this case you probably want to use @chisel.ff.cleanup in order to cleanup after suffstats before receiveing a new translation to be scored
+    5) use @chisel.ff.dense to define a new feature which returns a single value 
+       the decorated function's name will name the feature
+    6) use @chisel.ff.features('f1', 'f2', ..., 'fn') to define a function which returns a list of n feature values
+       the arguments of the decoration are the feature names
+    7) use @chisel.ff.sparse to define sparse features
+       the decorated function's name will prefix the features' names
 
 @author waziz
 """
@@ -15,16 +27,31 @@ import os
 import itertools
 import importlib
 
+
 _SINGLE_ = [] # (func, fname)
 _MULTIPLE_DENSE_ = [] # (func, fnames)
 _SPARSE_ = [] # (func, fprexis)
 _CONFIGURE_ = [] 
+_PREPROCESS_ = []
+_RESET_ = []
 _SUFFSTATS_ = [] 
 _CLEANUP_ = []
 
+# available decorators
+
 def configure(func):
-    """decorate func with ff.configure if you want to configure your ff"""
+    """decorate func with ff.configure if you want to configure your ff when the decoder is loaded"""
     _CONFIGURE_.append(func)
+    return func
+
+def preprocess(func):
+    """decorate func with ff.preprocess if you want to pre-process the input sentence right before the decoding process starts"""
+    _PREPROCESS_.append(func)
+    return func
+
+def reset(func):
+    """decorate func with ff.reset in order to reset your scorer to a null state after completing a translation"""
+    _RESET_.append(func)
     return func
 
 def suffstats(func):
@@ -78,7 +105,9 @@ def sparse(scorer):
     logging.info('[sparse] scorer/feature %s', scorer.__name__)
     return scorer
 
-def load_features(features):
+# The following functions are not supposed to be used as decorators
+
+def load_scorers(features):
     for fdef in features:
         if os.path.isfile(fdef):
             try:
@@ -97,14 +126,23 @@ def load_features(features):
                 logging.error('Could not load feature defitions from module %s', fdef)
 
 
-def configure_features(config):
+def configure_scorers(config):
+    """configure scorer modules"""
     [func(config) for func in _CONFIGURE_]
+
+def preprocess_input(segment):
+    """preprocess input"""
+    [func(segment) for func in _PREPROCESS_]
+
+def reset_scorers():
+    """resets scorers to a null state"""
+    [func() for func in _RESET_]
 
 def compute_features(hypothesis):
     """
     compute_features(hypothesis) -> list of named feature values (i.e. pairs of the kind (fname, fvalue))
     """
-    # 1) give scores the chance to prepare some sufficient statistics
+    # 1) give scorers the chance to prepare some sufficient statistics
     [func(hypothesis) for func in _SUFFSTATS_]
     # 2) evaluate scorers
     pairs = []
@@ -122,3 +160,4 @@ def compute_features(hypothesis):
     [func() for func in _CLEANUP_]
     
     return pairs
+

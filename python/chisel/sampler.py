@@ -48,6 +48,14 @@ class Hypothesis(object):
         self.source_ = source
         self.translation_ = translation
 
+    @property
+    def src(self):
+        return self.source_
+
+    @property
+    def tgt(self):
+        return self.translation_
+
 def map_dot(fmap, wmap):
     return sum(fmap.get(fname, 0) * fweight for fname, fweight in wmap.iteritems())
 
@@ -80,15 +88,19 @@ if __name__ == '__main__':
 
     config = read_config(options.chisel)
     logging.info('chisel.ini: %s', config)
-    ff.load_features(options.features)
-    resources = ff.configure_features(config)
-
+    # loads scorer modules 
+    ff.load_scorers(options.features)
+    # configures scorer modules
+    ff.configure_scorers(config)
+    # reads from input
     for sid, line in enumerate(sys.stdin):
-        # parses input format
+        # parses input segment
         segment = SegmentMetaData.parse(sid, line.strip(), options.input_format, options.grammars)
         logging.info('Translating: %s', segment.src)
+        # pre-process the input (some scorers might require analysis of the input segment)
+        ff.preprocess_input(segment)
         # builds the proxy distribution
-        forest = build_proxy(segment.src_, segment.grammar_, options.proxy, options.scaling, options.cdec)
+        forest = build_proxy(segment.src, segment.grammar, options.proxy, options.scaling, options.cdec)
         # samples from the proxy distribution
         samples = sample(forest, options.samples)
         header = '\t'.join(['#count', '#translation', '#r', '#qmap', '#qdot', '#pmap', '#pdot'])
@@ -98,7 +110,7 @@ if __name__ == '__main__':
         for sample_str, sample_info in sorted(samples.iteritems(), key = lambda pair : len(pair[1]), reverse = True):
             #print >> sys.stderr, len(sample_info), sample_str
             # computes additional features
-            extraff = ff.compute_features(Hypothesis(source = segment.src_, translation = sample_str))
+            extraff = ff.compute_features(Hypothesis(source = segment.src, translation = sample_str))
             # groups vectors associated with equivalent derivations
             counter = collections.Counter(frozenset(fmap.iteritems()) for fmap, _ in sample_info)
             # compute target vectors
@@ -126,6 +138,8 @@ if __name__ == '__main__':
                 print ostream[-1]
                 qdots.append(qdot)
                 pdots.append(pdot)
+        # resets scorers to a null state
+        ff.reset_scorers()
     
     
     #alternative = {'derivation':'translation', 'vector':'pmap', 'score':'r', 'count':'count'}

@@ -1,6 +1,6 @@
 # Feature Functions
 
-To add a new feature function, simply implement your idea using this very simple guidelines:
+To add new feature functions, simply implement your idea using this very simple guidelines:
 
 1. Import the interface
 	
@@ -8,7 +8,7 @@ To add a new feature function, simply implement your idea using this very simple
 	import chisel
 	```
 
-2. Configure your extractor
+2. Configure your scorer
 
 	```python
 	@chisel.ff.configure
@@ -67,7 +67,20 @@ To add a new feature function, simply implement your idea using this very simple
 		my_suffstats = None
 	```
 
-5. Documentation is important! Thus make sure you start your module with an informative `docstring` telling others how to configure your module and what it produces exactly. If necessary, give some information about the design of your module. Finally, print your `docstring` on the screen in case your module is called as a main program.
+5. If your scorer needs to perform some linguistic analysis of the input, you probably want to do it just once. In this case you `preprocess` to preprocess the input segment and `reset` to reset your scorer to a null state after decoding the segment.
+	```python
+	@chisel.ff.preprocess
+	def parseInputSegment(segment):
+		global my_input_parse
+		my_input_parse = parse(segment.src)
+		
+	@chisel.ff.reset
+	def reset():
+		global my_input_parse
+		my_input_parse = None
+	```
+
+6. Documentation is important! Thus make sure you start your module with an informative `docstring` telling others how to configure your module and what it produces exactly. If necessary, give some information about the design of your module. Finally, print your `docstring` on the screen in case your module is called as a main program.
     ```python
     if __name__ == '__main__':
         print __doc__
