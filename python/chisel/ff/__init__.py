@@ -11,7 +11,7 @@ To create a new feature functions simply:
     3) use @chisel.ff.preprocess in order to pre-process an input segment (e.g. parse the input)
        in this case you probably want to use @chisel.ff.reset in order to reset your scorer to a null state after finishing decoding a sentence
     4) use @chisel.ff.suffstats in order to pre-process a translation (e.g. parse the output)
-       in this case you probably want to use @chisel.ff.cleanup in order to cleanup after suffstats before receiveing a new translation to be scored
+       in this case you probably want to use @chisel.ff.cleanup in order to cleanup after suffstats before receiving a new translation to be scored
     5) use @chisel.ff.dense to define a new feature which returns a single value 
        the decorated function's name will name the feature
     6) use @chisel.ff.features('f1', 'f2', ..., 'fn') to define a function which returns a list of n feature values
@@ -28,13 +28,13 @@ import itertools
 import importlib
 
 
-_SINGLE_ = [] # (func, fname)
-_MULTIPLE_DENSE_ = [] # (func, fnames)
-_SPARSE_ = [] # (func, fprexis)
-_CONFIGURE_ = [] 
+_SINGLE_ = []  # (func, fname)
+_MULTIPLE_DENSE_ = []  # (func, fnames)
+_SPARSE_ = []  # (func, fprexis)
+_CONFIGURE_ = []
 _PREPROCESS_ = []
 _RESET_ = []
-_SUFFSTATS_ = [] 
+_SUFFSTATS_ = []
 _CLEANUP_ = []
 
 # available decorators
@@ -44,15 +44,18 @@ def configure(func):
     _CONFIGURE_.append(func)
     return func
 
+
 def preprocess(func):
     """decorate func with ff.preprocess if you want to pre-process the input sentence right before the decoding process starts"""
     _PREPROCESS_.append(func)
     return func
 
+
 def reset(func):
     """decorate func with ff.reset in order to reset your scorer to a null state after completing a translation"""
     _RESET_.append(func)
     return func
+
 
 def suffstats(func):
     """decorate func with ff.suffstats if you have several ffs that share some underlying computation
@@ -60,10 +63,12 @@ def suffstats(func):
     _SUFFSTATS_.append(func)
     return func
 
+
 def cleanup(func):
     """decorate func with ff.cleanup if you need to cleanup (for instance because you use ff.suffstats) after your scorers"""
     _CLEANUP_.append(func)
     return func
+
 
 def dense(scorer):
     """
@@ -73,6 +78,7 @@ def dense(scorer):
     _SINGLE_.append((scorer, scorer.__name__))
     logging.info('[dense] scorer/feature %s', scorer.__name__)
     return scorer
+
 
 class features(object):
     """
@@ -93,6 +99,7 @@ class features(object):
         _MULTIPLE_DENSE_.append((scorer, self.fnames_))
         return scorer
 
+
 def sparse(scorer):
     """
     Decorating your scorer (scorer) with ff.sparse will declare a template for sparse features, prefixed by the scorer's name.
@@ -104,6 +111,7 @@ def sparse(scorer):
     _SPARSE_.append((scorer, scorer.__name__))
     logging.info('[sparse] scorer/feature %s', scorer.__name__)
     return scorer
+
 
 # The following functions are not supposed to be used as decorators
 
@@ -130,13 +138,16 @@ def configure_scorers(config):
     """configure scorer modules"""
     [func(config) for func in _CONFIGURE_]
 
+
 def preprocess_input(segment):
     """preprocess input"""
     [func(segment) for func in _PREPROCESS_]
 
+
 def reset_scorers():
     """resets scorers to a null state"""
     [func() for func in _RESET_]
+
 
 def compute_features(hypothesis):
     """
@@ -146,7 +157,7 @@ def compute_features(hypothesis):
     [func(hypothesis) for func in _SUFFSTATS_]
     # 2) evaluate scorers
     pairs = []
-    #  a) all single features (return 1 real value)
+    # a) all single features (return 1 real value)
     pairs.extend((fname, fvalue) for fname, fvalue in ((fname, func(hypothesis)) for func, fname in _SINGLE_) if fvalue)
     #  b) all multiple dense features (return a list of pairs (fname, fvalue))
     for func, fnames in _MULTIPLE_DENSE_:
@@ -158,6 +169,6 @@ def compute_features(hypothesis):
         pairs.extend(('{0}_{1}'.format(fprefix, fsuffix), fvalue) for fsuffix, fvalue in func(hypothesis) if fvalue)
     # 3) give ffs the chance to clean up
     [func() for func in _CLEANUP_]
-    
+
     return pairs
 

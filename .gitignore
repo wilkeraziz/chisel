@@ -18,7 +18,11 @@ python/chisel.egg-info/
 *.la
 *.a
 
+# vim swap files
 .*.swp
+
+# PyCharm files
+.idea
 
 # Reminders
 reminder
