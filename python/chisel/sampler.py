@@ -6,6 +6,7 @@ import logging
 import sys
 import argparse
 import math
+import os
 
 import ff
 import cdeclib
@@ -193,12 +194,18 @@ if __name__ == '__main__':
     # parser.add_argument("--top", type=int, default = 10, help = "Top n MBR solutions")
     parser.add_argument('--jobs', type=int, default=2, help='number of processes')
     parser.add_argument('--sortby', type=str, default='none', help='sort results by one of {n, p, q, r, nr}')
+    parser.add_argument('--odir', type=str, default='', help='output dir')
     options = parser.parse_args()
 
     # sanity checks
     if options.input_format == 'plain' and options.grammars is None:
         logging.error("'--input-format plain' requires '--grammars <path>'")
         sys.exit()
+
+    if options.odir:
+        if not os.path.isdir(options.odir):
+            os.mkdir(options.odir)
+        logging.info('Writing output to %s', options.odir)
 
     logging.basicConfig(level=logging.INFO, format='%(levelname)s %(message)s')
 
@@ -233,13 +240,19 @@ if __name__ == '__main__':
     pool = Pool(options.jobs)
     results = pool.map(sampling_wrapper, segments)
 
-    header = '\t'.join('#{0}'.format(x) for x in ImportanceSample.header())
     # log results
+    header = '\t'.join('#{0}'.format(x) for x in ImportanceSample.header())
     for result in results:
-        print '##', result.segment.id, '##'
-        print header
+        # get output stream
+        if options.odir:
+            fout = open('{0}/samples.{1}'.format(options.odir, result.segment.id), 'w')
+        else:
+            fout = sys.stdout
+        print >> fout, '#sid={0}'.format(result.segment.id)
+        print >> fout, header
         for sample in result.sorted(options.sortby):
-            print sample
+            print >> fout, sample
+        print >> fout
 
 
     # alternative = {'derivation':'translation', 'vector':'pmap', 'score':'r', 'count':'count'}
