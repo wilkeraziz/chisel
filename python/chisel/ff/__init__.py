@@ -21,6 +21,8 @@ To create a new feature functions simply:
 
 @author waziz
 """
+from hypothesis import Hypothesis
+
 import logging
 import sys
 import os

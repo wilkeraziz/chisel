@@ -44,6 +44,10 @@ class SegmentMetaData(object):
         self.alignment_ = tuple(alignment)
 
     @property
+    def id(self):
+        return self.sid_
+
+    @property
     def src(self):
         return self.src_
 
