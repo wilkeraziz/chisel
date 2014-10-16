@@ -10,7 +10,8 @@ import os
 
 import ff
 import cdeclib
-from io_utils import read_config, read_weights, SegmentMetaData, fmap2str
+from io_utils import read_config, read_weights, SegmentMetaData
+from converter import fpairs2str
 from multiprocessing import Pool
 
 
@@ -58,16 +59,33 @@ class ImportanceSample(object):
         return self.log_r_
 
     def __str__(self):
-        return '{0}\t{1}\t{2}\t{3}\t{4}\t{5}'.format(self.count,
-                                                     self.r,
-                                                     self.p,
-                                                     self.q,
-                                                     self.sample_str,
-                                                     fmap2str(self.fpairs))
+        return self.format_str()
 
-    @staticmethod
-    def header():
-        return 'count', 'log_ur', 'log_up', 'log_uq', 'sample', 'fpairs'
+    def format_str(self, keys = 'n r p q s v'.split(), separator = '\t'):
+        """
+        Format as string
+        :param keys: n (count), r (log importance weight), p (p dot), q (q dot), s (string), d (derivation), v (vector)
+        :param separator:
+        :return:
+        """
+        fields = [None] * len(keys)
+        for i, k in enumerate(keys):
+            if k == 'n':
+                x = self.count
+            elif k == 'r':
+                x = self.r
+            elif k == 'p':
+                x = self.p
+            elif k == 'q':
+                x = self.q
+            elif k == 's' or k == 'd': # TODO: return derivation
+                x = self.sample_str
+            elif k == 'v':
+                x = fpairs2str(self.fpairs)
+            else:
+                raise Exception('Unkonwn field: %s' % k)
+            fields[i] = str(x)
+        return separator.join(fields)
 
 
 class Result(object):
@@ -91,23 +109,24 @@ class Result(object):
 
     def sorted(self, opt):
         if opt == 'n':
-            return sorted(self.samples_, key = lambda sample : sample.count, reverse=True)
+            return sorted(self.samples_, key=lambda sample: sample.count, reverse=True)
         if opt == 'p':
-            return sorted(self.samples_, key = lambda sample : sample.p, reverse=True)
+            return sorted(self.samples_, key=lambda sample: sample.p, reverse=True)
         if opt == 'q':
-            return sorted(self.samples_, key = lambda sample : sample.q, reverse=True)
+            return sorted(self.samples_, key=lambda sample: sample.q, reverse=True)
         if opt == 'r':
-            return sorted(self.samples_, key = lambda sample : sample.r, reverse=True)
+            return sorted(self.samples_, key=lambda sample: sample.r, reverse=True)
         if opt == 'nr':
-            return sorted(self.samples_, key = lambda sample : sample.count * math.exp(sample.r), reverse=True)
+            return sorted(self.samples_, key=lambda sample: sample.count * math.exp(sample.r), reverse=True)
 
         return iter(self.samples_)
+
 
 def map_dot(fmap, wmap):
     return sum(fmap.get(fname, 0) * fweight for fname, fweight in wmap.iteritems())
 
 
-def sample(segment, proxy_weights, target_weights, options, decoder = None):
+def sample(segment, proxy_weights, target_weights, options, decoder=None):
     """
     Sample translation derivations for a given segment.
     :param segment: segment to be translated
@@ -177,9 +196,40 @@ def batch_sample(segments, proxy_weights, target_weights, options):
     return [sample(segment, proxy_weights, target_weights, options, decoder) for segment in segments]
 
 
+def write_to_file(result, columns, odir):
+    """
+    Write results to a file under `odir`
+    :param results: importance samples
+    :param columns: format to make string out of an importance sample
+    :param odir: output directory
+    """
+    # log results
+    header = '\t'.join('#{0}'.format(c) for c in columns)
+    with open('{0}/{1}'.format(odir, result.segment.id), 'w') as out:
+        print >> out, header
+        for sample in result.sorted(options.sortby):
+            print >> out, sample.format_str(columns)
+        print >> out
+
+
+def write_to_stdout(result, columns):
+    """
+    Write results to stdout
+    :param results: importance samples
+    :param columns: format to make string out of an importance sample
+    :param odir: ignored
+    """
+    header = '#sid\t{0}'.format('\t'.join('#{0}'.format(c) for c in columns))
+    print header
+    for sample in results.sorted(options.sortby):
+        print '{0}\t{1}'.format(result.segment.id, sample.format_str(columns))
+    print
+
+
 if __name__ == '__main__':
 
-    parser = argparse.ArgumentParser(description='MC sampler for hiero models')
+    parser = argparse.ArgumentParser(description='MC sampler for hiero models',
+                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("proxy", type=str, help="feature weights (proxy model)")
     parser.add_argument("target", type=str, help="feature weights (target model)")
     parser.add_argument("chisel", type=str, help="chisel's config file")
@@ -188,26 +238,36 @@ if __name__ == '__main__':
     parser.add_argument("--samples", type=int, default=100, help="number of samples (default: 100)")
     parser.add_argument('-f', "--features", action='append', default=[], help="additional feature definitions")
     parser.add_argument("--input-format", type=str, default='plain',
-                        help="'plain': one input sentence per line and requires --grammars (default option); 'chisel': tab-separated columns [grammar source]; 'cdec': sgml-formatted; 'moses': |||-separated columns [grammar source]")
+                        choices=['plain', 'chisel', 'moses', 'cdec'],
+                        help="'plain': one input sentence per line and requires --grammars (default option); "
+                             "'chisel': tab-separated columns [grammar source]; 'cdec': sgml-formatted; "
+                             "'moses': |||-separated columns [grammar source]")
     parser.add_argument("--grammars", type=str,
-                        help="where to find grammars (grammar files are expected to be named grammar.$i.sgm, with $i 0-based)")
+                        help="where to find grammars (grammar files are expected to be named grammar.$i.sgm, "
+                             "with $i 0-based)")
     # parser.add_argument("--top", type=int, default = 10, help = "Top n MBR solutions")
     parser.add_argument('--jobs', type=int, default=2, help='number of processes')
-    parser.add_argument('--sortby', type=str, default='none', help='sort results by one of {n, p, q, r, nr}')
-    parser.add_argument('--odir', type=str, default='', help='output dir')
+    parser.add_argument('--sortby', type=str, default='none',
+                        choices=['n', 'p', 'q', 'r', 'nr'],
+                        help='sort results by a specific column')
+    parser.add_argument('--workspace', type=str, default=None,
+                        help='samples will be written to $workspace/samples/$i')
+    #parser.add_argument('--odir', type=str, default='samples', help='output dir in workspace')
     options = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO, format='%(levelname)s %(message)s')
 
     # sanity checks
     if options.input_format == 'plain' and options.grammars is None:
         logging.error("'--input-format plain' requires '--grammars <path>'")
         sys.exit()
 
-    if options.odir:
-        if not os.path.isdir(options.odir):
-            os.mkdir(options.odir)
-        logging.info('Writing output to %s', options.odir)
-
-    logging.basicConfig(level=logging.INFO, format='%(levelname)s %(message)s')
+    output_dir = None
+    if options.workspace:
+        output_dir = '{0}/samples'.format(options.workspace)
+        if not os.path.isdir(output_dir):
+            os.makedirs(output_dir)
+        logging.info('Writing output to %s', output_dir)
 
     # parameters of the instrumental distribution
     proxy_weights = read_weights(options.proxy, options.scaling)
@@ -233,27 +293,25 @@ if __name__ == '__main__':
 
     logging.info('Distributing %d segments to %d jobs', len(segments), options.jobs)
 
-    def sampling_wrapper(seg):
+    # log results
+    columns = ('n', 'r', 'p', 'q', 'd', 'v')
+
+    def sampling_wrapper_with_return(seg):
         return sample(seg, proxy_weights, target_weights, options)
 
-    # distribute jobs
-    pool = Pool(options.jobs)
-    results = pool.map(sampling_wrapper, segments)
+    def sampling_wrapper_without_return(seg):
+        result = sample(seg, proxy_weights, target_weights, options)
+        write_to_file(result, columns, output_dir)
 
-    # log results
-    header = '\t'.join('#{0}'.format(x) for x in ImportanceSample.header())
-    for result in results:
-        # get output stream
-        if options.odir:
-            fout = open('{0}/samples.{1}'.format(options.odir, result.segment.id), 'w')
-        else:
-            fout = sys.stdout
-        print >> fout, '#sid={0}'.format(result.segment.id)
-        print >> fout, header
-        for sample in result.sorted(options.sortby):
-            print >> fout, sample
-        print >> fout
-
+    if output_dir is None:
+        # distribute jobs
+        pool = Pool(options.jobs)
+        results = pool.map(sampling_wrapper_with_return, segments)
+        [write_to_stdout(result, columns) for result in results]
+    else:
+        # distribute jobs
+        pool = Pool(options.jobs)
+        pool.map(sampling_wrapper_without_return, segments)
 
     # alternative = {'derivation':'translation', 'vector':'pmap', 'score':'r', 'count':'count'}
     #solutions = decision.read_solutions(iter(ostream), alternative)
