@@ -225,25 +225,10 @@ def sample_and_save(odir, columns, sortby, *args, **kwargs):
 
 
 def argparse_and_config():
-    conf_parser = argparse.ArgumentParser(description='MC sampler for hiero models',
-                                          add_help=False)
-    # first we deal with general configuration
-    conf_parser.add_argument("config", type=str, help="config file")
-    args, remaining_argv = conf_parser.parse_known_args()
-    # parse the config file
-    #config = SimpleConfigParser()
-    config = RawConfigParser()
-    # this is necessary in order not to lowercase the keys
-    config.optionxform = str
-    config.read(args.config)
-    # some command line options may be overwritten by the section 'chisel:sampler' in the config file
-    sampler_options = section_literal_eval(config.items('chisel:sampler'))
-
-    # now we add specific options
     parser = argparse.ArgumentParser(description='MC sampler for hiero models',
-                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-                                     parents=[conf_parser])
+                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
+    parser.add_argument('config', type=str, help='configuration file')
     parser.add_argument('--workspace', type=str, default=None,
                         help='samples will be written to $workspace/samples/$i')
     parser.add_argument("--scaling", type=float, default=1.0, help="scaling parameter for the model (default: 1.0)")
@@ -266,8 +251,19 @@ def argparse_and_config():
     #parser.add_argument("--cdec", type=str, help="cdec's config file")
     #parser.add_argument("--resources", type=str, help="external resources config file")
 
-    parser.set_defaults(**sampler_options)
     args = parser.parse_args()
+
+    # parse the config file
+    config = RawConfigParser()
+    # this is necessary in order not to lowercase the keys
+    config.optionxform = str
+    config.read(args.config)
+    # some command line options may be overwritten by the section 'chisel:sampler' in the config file
+    if config.has_section('chisel:sampler'):
+        sampler_options = section_literal_eval(config.items('chisel:sampler'))
+        parser.set_defaults(**sampler_options)
+        # reparse options (with new defaults) TODO: find a better way
+        args = parser.parse_args()
 
     # overwrite global config file using command line specific config files
     #if args.proxy:
