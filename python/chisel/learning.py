@@ -3,9 +3,11 @@ __author__ = 'waziz'
 import argparse
 import logging
 import sys
-from io_utils import read_weights, read_sampled_derivations
+
+from python.chisel.util.io import read_weights, read_sampled_derivations
 from decoder.estimates import EmpiricalDistribution
 from smt import groupby
+
 
 if __name__ == '__main__':
 

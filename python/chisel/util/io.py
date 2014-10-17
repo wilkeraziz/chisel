@@ -3,7 +3,7 @@ __author__ = 'waziz'
 import re
 from os.path import isfile, basename
 import logging
-from smt import Derivation, Tree, SVector
+from chisel.smt import Derivation, Tree, SVector
 import math
 from glob import glob
 

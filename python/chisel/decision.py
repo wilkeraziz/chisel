@@ -4,13 +4,14 @@ import logging
 import sys
 import os
 import argparse
-from decoder import MBR, consensus, MAP
-from metric import BLEU
-from io_utils import read_weights, read_sampled_derivations, next_block, read_block, list_numbered_files
-from smt import groupby, KBestSolution
-from decoder.estimates import EmpiricalDistribution
 from multiprocessing import Pool
 from itertools import izip
+
+from decoder import MBR, consensus, MAP
+from metric import BLEU
+from python.chisel.util.io import read_weights, read_sampled_derivations, next_block, read_block, list_numbered_files
+from smt import groupby, KBestSolution
+from decoder.estimates import EmpiricalDistribution
 
 
 def sort_by(empdist, scores, reward=True):
@@ -72,7 +73,7 @@ def make_decisions(block, headers, options, fnames, gnames):
         if bleu is None:
             bleu = BLEU(empdist)
         co_gains = consensus(empdist, bleu, normalise=True)
-        solutions['Consensus'] = pack_nbest(empdist, co_gains, options.nbest, reward=True)
+        solutions['consensus'] = pack_nbest(empdist, co_gains, options.nbest, reward=True)
 
     return solutions
 

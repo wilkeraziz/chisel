@@ -9,7 +9,7 @@ import itertools
 from collections import defaultdict
 from semiring import CountSemiring, MaxTimesSemiring, SumTimesSemiring, ProbabilitySemiring
 import numpy as np
-from converter import npvec2str, kv2str
+from util import npvec2str, kv2str
 
 
 class SVector(object):

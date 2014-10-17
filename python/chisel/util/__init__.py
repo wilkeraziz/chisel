@@ -1,6 +1,20 @@
 __author__ = 'waziz'
 
+from ast import literal_eval
 from itertools import izip
+
+
+def section_literal_eval(items):
+    return {k: literal_eval(v) for k, v in items}
+
+
+def scaled_fmap(fmap, scaling=1.0):
+    """Returns a feature map scaled by a constant"""
+    return {k: v*scaling for k, v in fmap.iteritems()}
+
+
+def fmap_dot(fmap, wmap):
+    return sum(fmap.get(fname, 0) * fweight for fname, fweight in wmap.iteritems())
 
 
 def str2fmap(line):
@@ -11,6 +25,14 @@ def str2fmap(line):
 def fpairs2str(iterable):
     """converts an iterable of feature-value pairs into string"""
     return ' '.join('%s=%s' % (k, str(v)) for k, v in iterable)
+
+
+def dict2str(d, separator='=', sort=False, reverse=False):
+    """converts an iterable of feature-value pairs into string"""
+    if sort:
+        return ' '.join('{0}{1}{2}'.format(k, separator, v) for k, v in sorted(d.iteritems(), reverse=reverse))
+    else:
+        return ' '.join('{0}{1}{2}'.format(k, separator, v) for k, v in d.iteritems())
 
 
 def npvec2str(nparray, fnames=None):

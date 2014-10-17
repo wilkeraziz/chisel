@@ -6,7 +6,18 @@ import gzip
 from collections import defaultdict
 
 
-def create_decoder(cdec_ini, weights_file, scaling = 1.0):
+def make_cdec_config_string(cdec_items, cdec_features_items):
+    """
+    Create the string equivalent of a cdec.ini
+    :param cdec_items: list of pairs in the section [cdec]
+    :param cdec_features_items: list of pairs in the section [cdec:features]
+    :return str: the configuration string
+    """
+    return '{0}\n{1}'.format('\n'.join('{0}={1}'.format(k, v) for k, v in cdec_items),
+                             '\n'.join('feature_function={0} {1}'.format(k, v) for k, v in cdec_features_items))
+
+
+def create_decoder_from_files(cdec_ini, weights_file, scaling=1.0):
     """
     Creates an instance of cdec.Decoder
     :param cdec_ini: cdec's configuration file
@@ -24,6 +35,22 @@ def create_decoder(cdec_ini, weights_file, scaling = 1.0):
     logging.info('Loading weights: %s', weights_file)
     decoder.read_weights(weights_file, scaling)
     # logging.info('Weights: %s', dict(decoder.weights))
+    return decoder
+
+
+def create_decoder(config_str, weights):
+    """
+    Creates an instance of cdec.Decoder
+    :param config_str: cdec's configuration string
+    :param dict weights: parameters of the instrumental distribution
+    :return: an instance of cdec.Decoder
+    """
+    # perhaps make sure formalism=scfg and intersection_strategy=full?
+    # decoder = cdec.Decoder(config_str=config_str, formalism='scfg', intersection_strategy='Full')
+    decoder = cdec.Decoder(config_str=config_str)
+    for k, v in weights.iteritems():
+        decoder.weights[k] = v
+
     return decoder
 
 

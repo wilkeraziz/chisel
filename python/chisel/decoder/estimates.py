@@ -146,5 +146,5 @@ class EmpiricalDistribution(object):
                         f=self.f(i),
                         g=self.g(i),
                         p=self.p(i, normalise=True),
-                        q=self.p(i, normalise=True),
+                        q=self.q(i, normalise=True),
                         n=self.n(i, normalise=False))
