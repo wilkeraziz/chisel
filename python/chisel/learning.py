@@ -4,11 +4,6 @@ __author__ = 'waziz'
 
 import argparse
 import logging
-import sys
-
-from util.io import read_weights, read_sampled_derivations
-from decoder.estimates import EmpiricalDistribution
-from smt import groupby
 from util import section_literal_eval, scaled_fmap, dict2str
 
 
@@ -18,7 +13,7 @@ def argparse_and_config():
 
     parser.add_argument('config', type=str, help="configuration file")
 
-    parser.add_argument("--metric", type=str, default='ibm_bleu',
+    parser.add_argument("--mteval", type=str, default='ibm_bleu',
                         choices=['ibm_bleu', 'bleu_p1', 'unsmoothed_bleu'],
                         help="similarity function")
     parser.add_argument("--scaling", type=float, default=1.0, help="scaling parameter for the model (default: 1.0)")

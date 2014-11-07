@@ -41,6 +41,7 @@ _CLEANUP_ = []
 
 # available decorators
 
+
 def configure(func):
     """decorate func with ff.configure if you want to configure your ff when the decoder is loaded"""
     _CONFIGURE_.append(func)
@@ -48,7 +49,8 @@ def configure(func):
 
 
 def preprocess(func):
-    """decorate func with ff.preprocess if you want to pre-process the input sentence right before the decoding process starts"""
+    """decorate func with ff.preprocess if you want to pre-process
+    the input sentence right before the decoding process starts"""
     _PREPROCESS_.append(func)
     return func
 
@@ -67,7 +69,8 @@ def suffstats(func):
 
 
 def cleanup(func):
-    """decorate func with ff.cleanup if you need to cleanup (for instance because you use ff.suffstats) after your scorers"""
+    """decorate func with ff.cleanup if you need to cleanup
+    (for instance because you use ff.suffstats) after your scorers"""
     _CLEANUP_.append(func)
     return func
 
@@ -117,8 +120,8 @@ def sparse(scorer):
 
 # The following functions are not supposed to be used as decorators
 
-def load_scorers(features):
-    for fdef in features:
+def load_scorers(scorers):
+    for fdef in scorers:
         if os.path.isfile(fdef):
             try:
                 logging.info('Loading additional feature definitions from file %s', fdef)
@@ -151,24 +154,24 @@ def reset_scorers():
     [func() for func in _RESET_]
 
 
-def compute_features(hypothesis):
+def compute_features(hyps):
     """
     compute_features(hypothesis) -> list of named feature values (i.e. pairs of the kind (fname, fvalue))
     """
     # 1) give scorers the chance to prepare some sufficient statistics
-    [func(hypothesis) for func in _SUFFSTATS_]
+    [func(hyps) for func in _SUFFSTATS_]
     # 2) evaluate scorers
     pairs = []
     # a) all single features (return 1 real value)
-    pairs.extend((fname, fvalue) for fname, fvalue in ((fname, func(hypothesis)) for func, fname in _SINGLE_) if fvalue)
+    pairs.extend((fname, fvalue) for fname, fvalue in ((fname, func(hyps)) for func, fname in _SINGLE_) if fvalue)
     #  b) all multiple dense features (return a list of pairs (fname, fvalue))
     for func, fnames in _MULTIPLE_DENSE_:
-        fvalues = func(hypothesis)
+        fvalues = func(hyps)
         assert len(fnames) == len(fvalues), 'expected %d features, found %d' % (len(fnames), len(fvalues))
         pairs.extend((fname, fvalue) for fname, fvalue in itertools.izip(fnames, fvalues) if fvalue)
     #  c) all sparse features (return a list of pair (fsuffix, fvalue))
     for func, fprefix in _SPARSE_:
-        pairs.extend(('{0}_{1}'.format(fprefix, fsuffix), fvalue) for fsuffix, fvalue in func(hypothesis) if fvalue)
+        pairs.extend(('{0}_{1}'.format(fprefix, fsuffix), fvalue) for fsuffix, fvalue in func(hyps) if fvalue)
     # 3) give ffs the chance to clean up
     [func() for func in _CLEANUP_]
 

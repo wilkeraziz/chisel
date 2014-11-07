@@ -1,13 +1,13 @@
-__author__ = 'waziz'
-
 """
 This module contains data structures useful for decoding in the context of SMT.
 @author waziz
 """
+__author__ = 'waziz'
+
 import re
 import itertools
 from collections import defaultdict
-from semiring import CountSemiring, MaxTimesSemiring, SumTimesSemiring, ProbabilitySemiring
+from semiring import CountSemiring
 import numpy as np
 from util import npvec2str, kv2str
 
@@ -151,7 +151,7 @@ class Derivation(object):
     A weighted derivation sampled a number of times
     """
 
-    def __init__(self, tree, vector, score, count, importance = 1.0):
+    def __init__(self, tree, vector, score, count, importance=1.0):
         self.tree_ = tree
         self.vector_ = vector
         self.score_ = score

@@ -4,7 +4,7 @@
 import collections
 import math
 import numpy as np
-from scipy.sparse import csr_matrix, csc_matrix, lil_matrix
+#from scipy.sparse import csr_matrix, csc_matrix, lil_matrix
 
 
 class NGram(object):
@@ -118,7 +118,7 @@ class EfficientClippedCounts(object):
 
 class BLEUSufficientStatistics(object):
 
-    def __init__(self, E, n = 4):
+    def __init__(self, E, n=4):
         """
         @param E is an evidence set (where we gather ngram counts from) encoded as a list of Sample objects
         @param maximum ngram order (for standard BLEU this is 4)

@@ -31,9 +31,9 @@ suffstats = None
 @chisel.ff.configure
 def configure(config):
     global model
-    if 'KLanguageModel' not in config:
-        raise Exception('Perhaps you forgot to configure `KLanguageModel=<path to LM>` in your chisel.ini file?')
-    model = kenlm.LanguageModel(config['KLanguageModel'])
+    if 'klm.model' not in config:
+        raise Exception('Perhaps you forgot to configure `klm.model=<path to LM>` in your chisel.ini file?')
+    model = kenlm.LanguageModel(config['klm.model'])
 
 @chisel.ff.suffstats
 def full_scores(hypothesis):

@@ -329,19 +329,19 @@ def main():
         scorers_map = section_literal_eval(config.items('chisel:scorers'))
         ff.load_scorers(scorers_map.itervalues())
 
-    # load resources
-    if config.has_section('chisel:resources'):
-        resources = section_literal_eval(config.items('chisel:resources'))
+    # scorers' configuration
+    if config.has_section('chisel:scorers:config'):
+        scorers_config = section_literal_eval(config.items('chisel:scorers:config'))
     else:
-        resources = {}
-    logging.info('chisel:resources: %s', resources)
+        scorers_config = {}
+    logging.info('chisel:scorers:config: %s', scorers_config)
 
     # logs which features were added to the proxy
     extra_features = {k: v for k, v in target_weights.iteritems() if k not in proxy_weights}
     logging.info('Extra features: %s', extra_features)
 
     # configure scorers
-    ff.configure_scorers(resources)
+    ff.configure_scorers(scorers_config)
 
     # reads segments from input
     segments = [SegmentMetaData.parse(sid,

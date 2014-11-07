@@ -80,6 +80,10 @@ class EmpiricalDistribution(object):
         return len(self.support_)
 
     @property
+    def support(self):
+        return self.support_
+
+    @property
     def p_features(self):
         return self.p_features_
 

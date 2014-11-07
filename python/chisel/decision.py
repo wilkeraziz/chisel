@@ -1,20 +1,22 @@
+"""
+@author waziz
+"""
+
 from ConfigParser import RawConfigParser
-
-__author__ = 'waziz'
-
 import logging
 import sys
+import traceback
 import os
 import argparse
 from multiprocessing import Pool
 from itertools import izip
-from decoder import MBR, consensus, MAP
-from metric import BLEU
-from util.io import read_weights, read_sampled_derivations, next_block, read_block, list_numbered_files
+from decoder import MBR, MAP, consensus
+from util.io import read_sampled_derivations, next_block, read_block, list_numbered_files
 from smt import groupby, KBestSolution
 from decoder.estimates import EmpiricalDistribution
 from functools import partial
 from util import section_literal_eval, scaled_fmap, dict2str
+import mteval
 
 
 def sort_by(empdist, scores, reward=True):
@@ -47,59 +49,63 @@ def pack_nbest(empdist, target, nbest=-1, reward=True):
 
 
 def make_decisions(block, headers, options, fnames, gnames):
-    derivations = read_sampled_derivations(iter(block), headers)
-    empdist = EmpiricalDistribution(groupby(derivations, key=lambda d: d.tree.projection),
-                                    fnames,
-                                    gnames)
+    # this code runs in a Pool, thus we wrap in try/except in order to have more informative exceptions
+    try:
+        derivations = read_sampled_derivations(iter(block), headers)
+        empdist = EmpiricalDistribution(groupby(derivations, key=lambda d: d.tree.projection),
+                                        fnames,
+                                        gnames)
 
-    logging.info('%d unique strings', len(empdist))
+        logging.info('%d unique strings', len(empdist))
 
-    bleu = None
+        solutions = {}
 
-    solutions = {}
+        if options.map:
+            # print 'MAP:'
+            posterior = MAP(empdist, normalise=True)
+            solutions['MAP'] = pack_nbest(empdist, posterior, options.nbest, reward=True)
 
-    if options.map:
-        # print 'MAP:'
-        posterior = MAP(empdist, normalise=True)
-        solutions['MAP'] = pack_nbest(empdist, posterior, options.nbest, reward=True)
+        if options.mbr:
+            mteval.prepare_decoding(None, empdist, empdist)
+            eb_gains = MBR(empdist, options.metric, normalise=True)
+            solutions['MBR'] = pack_nbest(empdist, eb_gains, options.nbest, reward=True)
 
-    if options.mbr:
-        # print 'MBR: IBM-BLEU'
-        if bleu is None:
-            bleu = BLEU(empdist)
-        eb_gains = MBR(empdist, bleu, normalise=True)
-        solutions['MBR'] = pack_nbest(empdist, eb_gains, options.nbest, reward=True)
+        if options.consensus:
+            co_gains = consensus(empdist, options.metric, normalise=True)
+            solutions['consensus'] = pack_nbest(empdist, co_gains, options.nbest, reward=True)
 
-    if options.consensus:
-        # print 'Consensus: IBM-BLEU'
-        if bleu is None:
-            bleu = BLEU(empdist)
-        co_gains = consensus(empdist, bleu, normalise=True)
-        solutions['consensus'] = pack_nbest(empdist, co_gains, options.nbest, reward=True)
-
-    return solutions
+        return solutions
+    except:
+        raise Exception(''.join(traceback.format_exception(*sys.exc_info())))
 
 
-def create_output_dir(workspace, decision_rule):
-    output_dir = '{0}/{1}'.format(workspace, decision_rule)
+def create_output_dir(workspace, decision_rule, metric_name=None):
+    if metric_name is None:
+        output_dir = '{0}/{1}'.format(workspace, decision_rule)
+    else:
+        output_dir = '{0}/{1}-{2}'.format(workspace, decision_rule, metric_name)
     if not os.path.isdir(output_dir):
         os.makedirs(output_dir)
     return output_dir
 
 
 def decide_and_save(job_desc, headers, options, fnames, gnames, output_dirs):
-    jid, block = job_desc
-    # make decisions
-    decisions = make_decisions(block, headers, options, fnames, gnames)
-    # write to file if necessary
-    for rule, ranking in decisions.iteritems():
-        with open('{0}/{1}'.format(output_dirs[rule], jid), 'w') as out:
-            print >> out, '\t'.join(['#target', '#p', '#q', '#n', '#yield', '#f', '#g'])
-            for solution in ranking:
-                print >> out, solution.format_str(keys=['p', 'q', 'n', 'yield', 'f', 'g'],
-                                                  separator='\t', named=False,
-                                                  fnames=fnames, gnames=gnames)
-            print >> out
+    # this code runs in a Pool, thus we wrap in try/except in order to have more informative exceptions
+    try:
+        jid, block = job_desc
+        # make decisions
+        decisions = make_decisions(block, headers, options, fnames, gnames)
+        # write to file if necessary
+        for rule, ranking in decisions.iteritems():
+            with open('{0}/{1}'.format(output_dirs[rule], jid), 'w') as out:
+                print >> out, '\t'.join(['#target', '#p', '#q', '#n', '#yield', '#f', '#g'])
+                for solution in ranking:
+                    print >> out, solution.format_str(keys=['p', 'q', 'n', 'yield', 'f', 'g'],
+                                                      separator='\t', named=False,
+                                                      fnames=fnames, gnames=gnames)
+                print >> out
+    except:
+        raise Exception(''.join(traceback.format_exception(*sys.exc_info())))
 
 
 def argparse_and_config():
@@ -110,10 +116,9 @@ def argparse_and_config():
     parser.add_argument('config', type=str, help="configuration file")
     parser.add_argument("--scaling", type=float, default=1.0, help="scaling parameter for the model (default: 1.0)")
     parser.add_argument("--map", action='store_true', help="MAP decoding")
-    parser.add_argument("--mbr", action='store_true', help="MBR decoding")
+    parser.add_argument("--mbr", action='store_true', help="MBR decoding (Kumar and Byrne, 2003)")
     parser.add_argument("--consensus", action='store_true', help="Consensus (DeNero et al, 2009)")
-    parser.add_argument("--metric", type=str, default='ibm_bleu',
-                        choices=['ibm_bleu', 'bleu_p1', 'unsmoothed_bleu'],
+    parser.add_argument("--metric", type=str, default='bleu',
                         help="similarity function")
     parser.add_argument("--nbest", type=int, default=1, help="number of solutions")
     parser.add_argument("--jobs", type=int, default=2, help="number of processes")
@@ -122,6 +127,7 @@ def argparse_and_config():
 
     # gather options
     args = parser.parse_args()
+    logging.basicConfig(level=logging.INFO, format='%(levelname)s %(message)s')
 
     # parse config file
     config = RawConfigParser()
@@ -135,7 +141,7 @@ def argparse_and_config():
         # reparse options (with new defaults) TODO: find a better way
         args = parser.parse_args()
 
-    logging.basicConfig(level=logging.INFO, format='%(levelname)s %(message)s')
+
     return args, config
 
 
@@ -151,6 +157,27 @@ def main():
     target_weights = scaled_fmap(section_literal_eval(config.items('target')), options.scaling)
     fnames = sorted(target_weights.iterkeys())
     logging.info('target: %s', dict2str(target_weights, sort=True))
+
+    # loads mteval modules
+    if config.has_section('chisel:metrics'):
+        metrics_map = section_literal_eval(config.items('chisel:metrics'))
+        mteval.load_metrics(metrics_map.itervalues())
+    else:
+        logging.info('Loading BLEU by default')
+        mteval.load_metrics(['chisel.mteval.bleu'])
+
+    # metrics' configuration
+    if config.has_section('chisel:metrics:config'):
+        metrics_config = section_literal_eval(config.items('chisel:metrics:config'))
+    else:
+        metrics_config = {}
+    logging.info('chisel:metrics:config: %s', metrics_config)
+
+    if not mteval.sanity_check(options.metric):
+        raise Exception("Perhaps you forgot to include the metric '%s' in the configuration file?" % options.metric)
+
+    # configure metrics
+    mteval.configure_metrics(metrics_config)
 
     # gather decision rules to be run
     decision_rules = []
@@ -174,7 +201,7 @@ def main():
         # create output folders
         # TODO: check whether decisions already exist (and warn the user)
         for rule in decision_rules:
-            output_dirs[rule] = create_output_dir(options.workspace, rule)
+            output_dirs[rule] = create_output_dir(options.workspace, rule, options.metric)
             logging.info("Writing '%s' decisions to %s", rule, output_dirs[rule])
 
     # TODO: generalise this
@@ -189,15 +216,17 @@ def main():
         jobs = [(fid, read_block(open(input_file, 'r'))) for fid, input_file in input_files]
         logging.info('%d jobs', len(jobs))
 
-    # single_threaded = False
-    #if single_threaded:
-    #    for jid, job in jobs:
-    #        decisions = make_decisions(block, headers, options, fnames, gnames)
-    #        for rule, ranking in decisions.iteritems():
-    #            print '[%d] %s' % (jid, rule)
-    #            for solution in ranking:
-    #                print solution.format_str(keys=['p', 'q', 'n', 'yield'], separator=' ', named=True)
-    #    sys.exit(0)
+    """
+    single_threaded = True
+    if single_threaded:
+        for jid, job in jobs:
+            decisions = make_decisions(job, headers, options, fnames, gnames)
+            for rule, ranking in decisions.iteritems():
+                print '[%d] %s' % (jid, rule)
+                for solution in ranking:
+                    print solution.format_str(keys=['p', 'q', 'n', 'yield'], separator=' ', named=True)
+        sys.exit(0)
+    """
 
     # run jobs in parallel
     if options.workspace:
@@ -219,7 +248,6 @@ def main():
                                    options=options,
                                    fnames=fnames,
                                    gnames=gnames), (job for jid, job in jobs))
-
         for (j, job), decisions in izip(jobs, results):
             for rule, ranking in decisions.iteritems():
                 print '[%d] %s' % (j, rule)

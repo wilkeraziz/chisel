@@ -18,10 +18,11 @@ tgt_parse = None
 @chisel.ff.configure
 def configure(config):
     global interval
-    if 'Dummy' not in config:
-        raise Exception('Perhaps you forgot to configure `Dummy=a b` in your chisel.ini file?')
-    conf_str = config['Dummy'] 
-    a, b = [int(x) for x in conf_str.split()]
+    if 'dummy.a' not in config:
+        raise Exception('Perhaps you forgot to configure `dummy.a=int` in your chisel.ini file?')
+    if 'dummy.b' not in config:
+        raise Exception('Perhaps you forgot to configure `dummy.b=int` in your chisel.ini file?')
+    a, b = config['dummy.a'], config['dummy.b']
     interval = (a, b)
 
 # preprocessing and cleaning (wrt source)

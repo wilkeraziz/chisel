@@ -1,55 +1,56 @@
 """
+Minimum Bayes Risk decoding for SMT (Kumar and Byrne, 2003):
+
+        c^ = \argmin_c \sum_r L_r(c)p(r)
+
+This decision rule runs in time O(|C||R|).
+DeNero et al (2009) introduce Consensuns Decoding, which is basically MBR over feature representations:
+
+    Assume the loss a function of the form:
+
+        L_r(c) = \sum_j \omega_j(c) \phi_j(r)
+
+    Then the risk becomes:
+
+        R(c)    = \sum_r L_r(c)p(r)
+                = \sum_r p(r) \sum_j \omega_j(c) \phi_j(r)
+                = \sum_j \omega_j(c) \sum_r \phi_j(r) p(r)
+                = \sum_j \omega_j(c) E_p[\phi_j(r)]
+
+    And the decision rule becomes:
+
+        c^ = \argmin_c \sum_j \omega_j(c) E_p[\phi_j(r)]
+
+    Note that this rule runs in time O(|C|k) where k is the number of features.
+
+Consensus Training (Pauls et al, 2009):
+
+        w^ = \argmin_w \sum_{(x,r) \in D} \sum_c L_r(c)p(c|x; w)
+
+    Remark: for fixed parameters w, the number of evaluations of the loss is proportional to O(|D||C|).
+
+    Again, assume the loss a function of the form:
+
+        L_r(c) = \sum_j \omega_j(c) \phi_j(r)
+
+    Then the risk becomes (omitting the dependency on x and w):
+
+        R(c)    = \sum_c L_r(c)p(c)
+                = \sum_c p(c) \sum_j \omega_j(c) \phi_j(r)
+                = \sum_j \phi_j(r) \sum_c \omega_j(c) p(c)
+                = \sum_j \phi_j(r) E_p[\omega_j(c)]
+
+    Ant the objective becomes
+
+        w^ = \argmin_w \sum_{(x,r) \in D} \sum_j \phi_j(r) E_p[\omega_j(c)]
+
+    Remark: now, for fixed parameters w, the number of evaluations of the loss is proportional to O(|C|k)
+
 @author waziz
 """
-from chisel.metric.bleu import BLEU
-import numpy as np
-from scipy.sparse import csr_matrix, csc_matrix
+import chisel.mteval as mteval
 
 
 def consensus(E, metric, normalise=False):
-    scores = [metric.expected(i, normalise) for i, Dy in enumerate(E)]
+    scores = [mteval.comparison(c=i, r=mteval.EXPECTED, metric=metric) for i, Dy in enumerate(E)]
     return scores
-
-
-def consensus_bleu(samples, bleusuff, bleu=BLEU.ibm_bleu):
-    ngramstats = bleusuff.ngramstats
-    # TODO: wrap in a class that prepares the expectations
-    N = [w for w in ngramstats.iterkeys()]
-    C = csc_matrix([stats.counts for stats in ngramstats.itervalues()])
-    L = np.matrix([bleusuff.length(h) for h in xrange(len(samples))])
-    P = np.matrix([sample.normcount for sample in samples]).transpose()
-    Ec = C * P
-    El = L * P
-    N2E = {w: Ec[i] for i, w in enumerate(N)}
-
-
-    S = [0] * len(samples)
-    for h, sample in enumerate(samples):
-    
-        # clip to the expected counts
-        cc = [0] * (bleusuff.maxorder + 1)
-        for w, c in bleusuff.ngrams(h).iteritems():
-            cc[len(w)] += min(c, N2E.get(w, 0))
-
-        # compute BLEU
-        S[h] = bleu(r = El[0,0], 
-                c = bleusuff.length(h), 
-                cc = cc,
-                tc = bleusuff.tc(h),
-                n = bleusuff.maxorder)
-
-    return S
-
-
-def cobleu(reference, samples, bleusuff, bleu = BLEU.ibm_bleu):
-    """
-    See Pauls et at 2009
-    it is basically BLEU where the candidate is represented by a vector of expected counts.
-
-    If BLEU(c, r) represents the modified ngram precision between a candidate c  and a reference r, then:
-        * in CoBLEU training, r is the reference and c is represented by expected counts
-            we then maximise theta (the parameters of the model)
-
-        * in Consensus decoding, c is a hypothesis and r is represented by expected counts
-    """
-    pass
