@@ -233,11 +233,10 @@ def argparse_and_config():
                         help='samples will be written to $workspace/samples/$i')
     parser.add_argument("--scaling", type=float, default=1.0, help="scaling parameter for the model (default: 1.0)")
     parser.add_argument("--samples", type=int, default=100, help="number of samples (default: 100)")
-    parser.add_argument("--input-format", type=str, default='plain',
-                        choices=['plain', 'chisel', 'moses', 'cdec'],
-                        help="'plain': one input sentence per line and requires --grammars (default option); "
-                             "'chisel': tab-separated columns [grammar source]; 'cdec': sgml-formatted; "
-                             "'moses': |||-separated columns [grammar source]")
+    parser.add_argument("--input-format", type=str, default='cdec',
+                        choices=['plain', 'cdec'],
+                        help="'plain': one input sentence per line and requires --grammars; "
+                             "'cdec': sgml-formatted")
     parser.add_argument("--grammars", type=str,
                         help="where to find grammars (grammar files are expected to be named grammar.$i.sgm, "
                              "with $i 0-based)")
@@ -344,10 +343,10 @@ def main():
     ff.configure_scorers(scorers_config)
 
     # reads segments from input
-    segments = [SegmentMetaData.parse(sid,
-                                      line.strip(),
+    segments = [SegmentMetaData.parse(line.strip(),
                                       options.input_format,
-                                      options.grammars)
+                                      sid=sid,
+                                      grammar_dir=options.grammars)
                 for sid, line in enumerate(sys.stdin)]
 
     logging.info('Distributing %d segments to %d jobs', len(segments), options.jobs)

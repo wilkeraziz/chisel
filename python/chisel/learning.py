@@ -5,6 +5,11 @@ __author__ = 'waziz'
 import argparse
 import logging
 from util import section_literal_eval, scaled_fmap, dict2str
+from util.io import SegmentMetaData
+
+
+#def objective(weights, training_data):
+
 
 
 def argparse_and_config():
@@ -12,14 +17,18 @@ def argparse_and_config():
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
     parser.add_argument('config', type=str, help="configuration file")
+    parser.add_argument("dev", type=str,
+                        help="development set")
 
-    parser.add_argument("--mteval", type=str, default='ibm_bleu',
-                        choices=['ibm_bleu', 'bleu_p1', 'unsmoothed_bleu'],
+
+    parser.add_argument("--metric", type=str, default='bleu',
                         help="similarity function")
     parser.add_argument("--scaling", type=float, default=1.0, help="scaling parameter for the model (default: 1.0)")
     parser.add_argument("--jobs", type=int, default=2, help="number of processes")
     parser.add_argument("--workspace", type=str, default=None,
                         help="where samples can be found and where decisions are placed")
+    parser.add_argument("--devtest", type=str,
+                        help="devtest set")
 
     # gather options
     args = parser.parse_args()
@@ -62,6 +71,16 @@ def main():
     #                                sorted(proxy_weights.keys()))
 
     #print empdist
+    logging.info('Reding dev set: %s', options.dev)
+    with open(options.dev, 'r') as f:
+        segments = [SegmentMetaData.parse(line.strip(),
+                                          'cdec',
+                                          sid=sid)
+                    for sid, line in enumerate(f)]
+
+        for seg in segments:
+            print seg.to_sgm()
+            print seg.refs
 
 
 if __name__ == '__main__':

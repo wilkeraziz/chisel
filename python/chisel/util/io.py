@@ -48,12 +48,11 @@ class SegmentMetaData(object):
     A simple container for input segments
     """
 
-    def __init__(self, sid, src, grammar, tgt='', alignment=[]):
+    def __init__(self, sid, src, grammar, refs=[]):
         self.sid_ = sid
         self.grammar_ = grammar
         self.src_ = src
-        self.tgt_ = tgt
-        self.alignment_ = tuple(alignment)
+        self.refs_ = tuple(refs)
 
     @property
     def id(self):
@@ -64,64 +63,74 @@ class SegmentMetaData(object):
         return self.src_
 
     @property
+    def refs(self):
+        return self.refs_
+
+    @property
     def grammar(self):
         return self.grammar_
 
     def __str__(self):
         return 'grammar=%s\tsrc=%s' % (self.grammar_, self.src_)
 
+    def to_sgm(self):
+        if self.refs_:
+            return '<seg grammar="{0}" id="{1}">{2}</seg> ||| {3}'.format(self.sid_,
+                                                                          self.grammar_,
+                                                                          self.src_,
+                                                                          ' ||| '.join(self.refs_))
+        else:
+            return '<seg grammar="{0}" id="{1}">{2}</seg>'.format(self.sid_,
+                                                                  self.grammar_,
+                                                                  self.src_)
+
     @staticmethod
-    def parse(sid, line, mode, grammar=None):
+    def parse(line, mode, sid=None, grammar_dir=None):
         # parse line
         if mode == 'plain':
-            data = parse_plain(line)
-        elif mode == 'cdec':
-            data = parse_cdec_sgml(line)
-        elif mode == 'moses':
-            data = parse_moses_columns(line)
-        elif mode == 'chisel':
-            data = parse_chisel_columns(line)
+            args = parse_plain(line)
+        if mode == 'cdec':
+            args = parse_cdec_sgml(line)
         else:
             raise Exception('unknown input format: %s' % mode)
-        # overrides
-        if grammar is not None:
-            data['grammar'] = '{0}/grammar.{1}.gz'.format(grammar, sid)
+        # overrides sentence id
+        if sid is not None:
+            args['sid'] = sid
+        # overrides grammar
+        if grammar_dir is not None:
+            args['grammar'] = '{0}/grammar.{1}.gz'.format(grammar_dir, sid)
         # sanity checks
-        if not isfile(data['grammar']):
-            raise Exception('Grammar file not found: %s' % data['grammar'])
+        if not isfile(args['grammar']):
+            raise Exception('Grammar file not found: %s' % args['grammar'])
         # construct segment
-        return SegmentMetaData(sid, data['src'], data['grammar'], data.get('tgt', ''), data.get('alignment', []))
-
-
-def parse_plain(plain_str):
-    fields = plain_str.split(' ||| ')
-    return {'src': fields[0].strip()}
-
-
-def parse_chisel_columns(chisel_str):
-    columns = chisel_str.split('\t')
-    if len(columns) < 2:
-        raise Exception('missing fields: %s' % columns)
-    return {'src': columns[1], 'grammar': columns[0]}
-
-
-def parse_moses_columns(moses_str):
-    columns = [token.strip() for token in moses_str.split('|||')]
-    if len(columns) < 2:
-        raise Exception('missing fields: %s' % columns)
-    return {'src': columns[1], 'grammar': columns[0]}
+        return SegmentMetaData(**args)
 
 
 def parse_cdec_sgml(sgml_str):
     """parses an sgml-formatted line as cdec would
     returns a dicts with grammar, id, src and tgt"""
-    #pattern = re.compile('<seg grammar="([^"]+)" id="([0-9]+)">(.+)<\/seg> [|]{3} (.+)')
+    parts = sgml_str.split(' ||| ')
+    if not parts:
+        raise Exception('Missing fields' % sgml_str)
     pattern = re.compile('<seg grammar="([^"]+)" id="([0-9]+)">(.+)<\/seg>')
-    match = pattern.match(sgml_str)
+    match = pattern.match(parts[0])
+    if match is None:
+        raise Exception('Bad sgml: %s' % parts[0])
     groups = match.groups()
-    if len(groups) < 3:
-        raise Exception('missing fields: %s' % groups)
-    return {'grammar': groups[0], 'sid': groups[1], 'src': groups[2]}
+    return {'grammar': groups[0],
+            'sid': groups[1],
+            'src': groups[2],
+            'refs': [ref.strip() for ref in parts[1:]]}
+
+
+def parse_plain(plain_str):
+    fields = plain_str.split(' ||| ')
+    if len(fields) == 0:
+        raise Exception('Missing fields: %s' % plain_str)
+    args = {'src': fields[0]}
+    if len(fields) > 1:
+        args = {'refs': fields[1:]}
+    return args
 
 
 def list_numbered_files(basedir, sort=True, reverse=False):
@@ -158,7 +167,8 @@ def read_block(fi):
     return block
 
 
-def read_sampled_derivations(iterable, required=dict((k, k) for k in 'derivation:d vector:v score:p count:n importance:r'.split())):
+def read_sampled_derivations(iterable, required=dict(
+    (k, k) for k in 'derivation:d vector:v score:p count:n importance:r'.split())):
     """
     Parse a file containing sampled derivations. The file is structured as a table (tab-separated columns).
     The first line contains the column names.
