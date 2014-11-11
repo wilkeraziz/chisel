@@ -3,9 +3,15 @@ n-gram LM features with KenLM.
 
 Usage:
 
-* this module requires configuration (via chisel.ini)
-    
-        KLanguageModel=<path to trained model>
+* include the model in config.ini
+
+        [chisel:scorers]
+        klm='chisel.ff.klm'
+
+* configure the scorer
+
+        [chisel:scorers:config]
+        klm.model='<path to trained model>'
 
 * the following features are defined
 

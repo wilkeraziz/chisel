@@ -113,16 +113,32 @@ def argparse_and_config():
     parser = argparse.ArgumentParser(description='Applies a decision rule to a sample.',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
-    parser.add_argument('config', type=str, help="configuration file")
-    parser.add_argument("--scaling", type=float, default=1.0, help="scaling parameter for the model (default: 1.0)")
-    parser.add_argument("--map", action='store_true', help="MAP decoding")
-    parser.add_argument("--mbr", action='store_true', help="MBR decoding (Kumar and Byrne, 2003)")
-    parser.add_argument("--consensus", action='store_true', help="Consensus (DeNero et al, 2009)")
-    parser.add_argument("--metric", type=str, default='bleu',
+    parser.add_argument('config',
+                        type=str,
+                        help="configuration file")
+    parser.add_argument("--scaling",
+                        type=float, default=1.0,
+                        help="scaling parameter for the model (default: 1.0)")
+    parser.add_argument("--map",
+                        action='store_true',
+                        help="MAP decoding")
+    parser.add_argument("--mbr",
+                        action='store_true',
+                        help="MBR decoding (Kumar and Byrne, 2003)")
+    parser.add_argument("--consensus",
+                        action='store_true',
+                        help="Consensus (DeNero et al, 2009)")
+    parser.add_argument("--metric", '-m',
+                        type=str, default='bleu',
                         help="similarity function")
-    parser.add_argument("--nbest", type=int, default=1, help="number of solutions")
-    parser.add_argument("--jobs", type=int, default=2, help="number of processes")
-    parser.add_argument("--workspace", type=str, default=None,
+    parser.add_argument("--nbest", '-k',
+                        type=int, default=1,
+                        help="number of solutions")
+    parser.add_argument("--jobs", '-j',
+                        type=int, default=2,
+                        help="number of processes")
+    parser.add_argument("--workspace", '-w',
+                        type=str, default=None,
                         help="where samples can be found and where decisions are placed")
 
     # gather options

@@ -228,20 +228,31 @@ def argparse_and_config():
     parser = argparse.ArgumentParser(description='MC sampler for hiero models',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
-    parser.add_argument('config', type=str, help='configuration file')
-    parser.add_argument('--workspace', type=str, default=None,
+    parser.add_argument('config',
+                        type=str, help='configuration file')
+    parser.add_argument('--workspace', '-w',
+                        type=str, default=None,
                         help='samples will be written to $workspace/samples/$i')
-    parser.add_argument("--scaling", type=float, default=1.0, help="scaling parameter for the model (default: 1.0)")
-    parser.add_argument("--samples", type=int, default=100, help="number of samples (default: 100)")
-    parser.add_argument("--input-format", type=str, default='cdec',
+    parser.add_argument("--scaling",
+                        type=float, default=1.0,
+                        help="scaling parameter for the model (default: 1.0)")
+    parser.add_argument("--samples",
+                        type=int, default=100,
+                        help="number of samples (default: 100)")
+    parser.add_argument("--input-format",
+                        type=str, default='cdec',
                         choices=['plain', 'cdec'],
                         help="'plain': one input sentence per line and requires --grammars; "
                              "'cdec': sgml-formatted")
-    parser.add_argument("--grammars", type=str,
+    parser.add_argument("--grammars",
+                        type=str,
                         help="where to find grammars (grammar files are expected to be named grammar.$i.sgm, "
                              "with $i 0-based)")
-    parser.add_argument('--jobs', type=int, default=2, help='number of processes')
-    parser.add_argument('--sortby', type=str, default='none',
+    parser.add_argument('--jobs', '-j',
+                        type=int, default=2,
+                        help='number of processes')
+    parser.add_argument('--sortby',
+                        type=str, default='none',
                         choices=['n', 'p', 'q', 'r', 'nr'],
                         help='sort results by a specific column')
 
