@@ -219,8 +219,12 @@ def main():
         # create output folders
         # TODO: check whether decisions already exist (and warn the user)
         for rule in decision_rules:
-            output_dirs[rule] = create_output_dir(options.workspace, rule, options.metric)
-            logging.info("Writing '%s' decisions to %s", rule, output_dirs[rule])
+            if rule == 'MAP':
+                output_dirs[rule] = create_output_dir(options.workspace, rule)
+                logging.info("Writing '%s' decisions to %s", rule, output_dirs[rule])
+            else:
+                output_dirs[rule] = create_output_dir(options.workspace, rule, options.metric)
+                logging.info("Writing '%s' decisions to %s", rule, output_dirs[rule])
 
     # TODO: generalise this
     headers = {'derivation': 'd', 'vector': 'v', 'score': 'p', 'count': 'n', 'importance': 'r'}
