@@ -1,7 +1,7 @@
 __author__ = 'waziz'
 
 from chisel.smt import Solution
-from chisel.converter import npvec2str
+from chisel.util import npvec2str
 import numpy as np
 
 
