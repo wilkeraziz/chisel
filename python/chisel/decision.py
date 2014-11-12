@@ -65,14 +65,16 @@ def make_decisions(block, headers, options, fnames, gnames):
             posterior = MAP(empdist, normalise=True)
             solutions['MAP'] = pack_nbest(empdist, posterior, options.nbest, reward=True)
 
-        if options.mbr:
+        if options.mbr or options.consensus:
             mteval.prepare_decoding(None, empdist, empdist)
-            eb_gains = MBR(empdist, options.metric, normalise=True)
-            solutions['MBR'] = pack_nbest(empdist, eb_gains, options.nbest, reward=True)
 
-        if options.consensus:
-            co_gains = consensus(empdist, options.metric, normalise=True)
-            solutions['consensus'] = pack_nbest(empdist, co_gains, options.nbest, reward=True)
+            if options.mbr:
+                eb_gains = MBR(empdist, options.metric, normalise=True)
+                solutions['MBR'] = pack_nbest(empdist, eb_gains, options.nbest, reward=True)
+
+            if options.consensus:
+                co_gains = consensus(empdist, options.metric, normalise=True)
+                solutions['consensus'] = pack_nbest(empdist, co_gains, options.nbest, reward=True)
 
         return solutions
     except:
