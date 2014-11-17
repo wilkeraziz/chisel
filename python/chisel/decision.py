@@ -16,6 +16,7 @@ from functools import partial
 from util import scaled_fmap, dict2str
 from util.config import section_literal_eval, configure
 import mteval
+from random import shuffle
 
 
 def sort_by(empdist, scores, reward=True):
@@ -145,6 +146,9 @@ def argparse_and_config():
     parser.add_argument("--workspace", '-w',
                         type=str, default=None,
                         help="where samples can be found and where decisions are placed")
+    parser.add_argument('--shuffle', '-s',
+                        action='store_true',
+                        help='shuffle jobs (with --workspace only)')
     parser.add_argument('--verbose', '-v',
                         action='store_true',
                         help='increases verbosity')
@@ -233,6 +237,8 @@ def main():
         input_files = list_numbered_files(samples_dir)
         jobs = [(fid, read_block(open(input_file, 'r'))) for fid, input_file in input_files]
         logging.info('%d jobs', len(jobs))
+        if options.shuffle:
+            shuffle(jobs)
 
     """
     single_threaded = True
@@ -251,6 +257,7 @@ def main():
         # writing to files
         pool = Pool(options.jobs)
         # job_desc, headers, options, fnames, gnames, output_dirs
+
         pool.map(partial(decide_and_save,
                          headers=headers,
                          options=options,
