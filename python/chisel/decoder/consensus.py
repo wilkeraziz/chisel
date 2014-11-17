@@ -49,8 +49,10 @@ Consensus Training (Pauls et al, 2009):
 @author waziz
 """
 import chisel.mteval as mteval
+import logging
+from time import time
 
 
 def consensus(E, metric, normalise=False):
-    scores = [mteval.comparison(c=i, r=mteval.EXPECTED, metric=metric) for i, Dy in enumerate(E)]
+    scores = [mteval.coloss(c=i, metric=metric) for i, Dy in enumerate(E)]
     return scores

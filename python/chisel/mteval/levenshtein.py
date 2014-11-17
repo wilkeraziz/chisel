@@ -1,7 +1,7 @@
 """
 Levenshtein distance
 
-    is a terrible MT evaluation metric,
+    is a pretty bad MT evaluation metric,
     I've implemented it here as an illustration of how to use the framework ;)
 
 It requires installing python-Levenshtein
@@ -16,64 +16,38 @@ import numpy as np
 from Levenshtein import distance as levdistance
 
 
-evidence_space = None
-hypothesis_space = None
-distances = None
+class WrappedLevenshtein(mteval.EvaluationMetric):
 
-@mteval.decoding
-def suffstats(src, evidence, hypotheses, consensus=False):
-    """
-    Compute sufficient statistics for BLEU
-    :param src:
-    :param EmpiricalDistribution evidence:
-    :param EmpiricalDistribution hypotheses:
-    """
-    global evidence_space
-    global hypothesis_space
-    global distances
+    def __init__(self, alias):
+        super(WrappedLevenshtein, self).__init__(alias)
+        self.evidence_space_ = None
+        self.hypothesis_space_ = None
+        self.distances_ = None
 
-    evidence_space = evidence
-    hypothesis_space = hypotheses
-    distances = np.zeros((len(hypotheses), len(evidence)))
+    def configure(self, config):
+        pass
 
-    for i, hyp in enumerate(hypotheses):
-        for j, ref in enumerate(evidence):
-            distances[i][j] = levdistance(hyp.projection, ref.projection)
+    def prepare_decoding(self, src, evidence, hypotheses):
+        self.evidence_space_ = evidence
+        self.hypothesis_space_ = hypotheses
+        self.distances_ = np.zeros((len(hypotheses), len(evidence)))
 
+        for i, hyp in enumerate(hypotheses):
+            for j, ref in enumerate(evidence):
+                self.distances_[i][j] = levdistance(hyp.projection, ref.projection)
 
+    def loss(self, c, r):
+        return self.distances_[c, r]/len(self.evidence_space_[r].projection)
 
-@mteval.compare
-def levenshtein(c, r):
-    """
-    Compare candidate c to reference r
-    :param int c:
-    :param int r:
-    :return: bleu score
-    """
-    if r is mteval.EXPECTED:
+    def coloss(self, c):
         raise NotImplementedError('Levenshtein does not support consensus decoding')
-    else:
-        return distances[c, r]/len(evidence_space[r].projection)
+
+    def cleanup(self):
+        self.evidence_space_ = None
+        self.hypothesis_space_ = None
+        self.distances_ = None
 
 
-@mteval.assess
-def levenshtein(c):
-    """
-    :type c: int
-    """
-    raise NotImplementedError('Levenshtein training is not yet supported')
+def construct(alias):
+    return WrappedLevenshtein(alias)
 
-
-@mteval.cleanup
-def cleanup():
-    global evidence_space
-    global hypothesis_space
-    global distances
-    evidence_space = None
-    hypothesis_space = None
-    distances = None
-
-
-@mteval.reset
-def reset():
-    pass

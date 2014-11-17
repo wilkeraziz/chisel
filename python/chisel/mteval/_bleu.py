@@ -248,12 +248,16 @@ class BLEU(object):
 
         # compute basic sufficient statistics
         self.bleu_suffstats_ = BLEUSufficientStatistics(evidence, max_order)
-        # and clipped counts
-        self.clipped_counts_ = EfficientClippedCounts(self.bleu_suffstats_.snt2ngrams, max_order)
         # configure smoothing
         self.bleu_ = BLEU.get(self.smoothing_)
+        # lazy computation of BLEU clipped counts
+        self.clipped_counts_ = None
         # lazy computation of CoBLEU sufficient statistics
         self.cobleu_suffstats_ = None
+
+    @property
+    def max_order(self):
+        return self.max_order_
 
     @property
     def bleu_suffstats(self):
@@ -261,19 +265,21 @@ class BLEU(object):
 
     @property
     def clipped_counts(self):
+        if self.clipped_counts_ is None:
+            self.clipped_counts_ = EfficientClippedCounts(self.bleu_suffstats.snt2ngrams, self.max_order_)
         return self.clipped_counts_
 
     @property
     def cobleu_suffstats(self):
         if self.cobleu_suffstats_ is None:
-            self.cobleu_suffstats_ = CoBLEUSufficientStatistics(self.evidence_, self.bleu_suffstats_)
+            self.cobleu_suffstats_ = CoBLEUSufficientStatistics(self.evidence_, self.bleu_suffstats)
         return self.cobleu_suffstats_
 
     def bleu(self, hid, rid):
-        return self.bleu_(r=self.bleu_suffstats_.length(rid),
-                          c=self.bleu_suffstats_.length(hid),
-                          cc=self.clipped_counts_.counts(hid, rid),
-                          tc=self.bleu_suffstats_.tc(hid),
+        return self.bleu_(r=self.bleu_suffstats.length(rid),
+                          c=self.bleu_suffstats.length(hid),
+                          cc=self.clipped_counts.counts(hid, rid),
+                          tc=self.bleu_suffstats.tc(hid),
                           n=self.max_order_)
 
     def cobleu(self, hid):

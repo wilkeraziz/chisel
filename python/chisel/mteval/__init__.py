@@ -1,19 +1,24 @@
-import logging
-import os
-import sys
-import importlib
+"""
+To add support to your own mteval metric, you need to wrap it exposing the interface in
+mteval.EvaluationMetric (pretty simple).
+Your module should also define a constructor function named 'construct' which takes exactly one string parameter:
 
-EXPECTED = None
+def construct(alias):
+    return MyWrappedMetric(alias)
 
-_CONFIGURE_ = []
-_PRECOMP_ = []
-_TRAINING_ = []
-_DECODING_ = []
-_RESET_ = []
-_CLEANUP_ = []
+where alias is the name the user chose to give to your metric in chisel's config file
+Example:
 
-_COMPARE_ = {}
-_ASSESS_ = {}
+[chisel:metrics]
+bleu='chisel.mteval.bleu'
+
+Then if you check 'chisel.mteval.bleu' you will find a method
+
+def construct(alias):
+    return WrappedBLEU(alias)
+
+when chisel calls this method, alias will contain the string 'bleu' as per the configuration file.
+"""
 
 
 """
@@ -41,122 +46,126 @@ Learning
     M    yM,1...yM,N     y'M,1 y'M,2 ... y'1,r
 """
 
+import logging
+import os
+import sys
+import importlib
 
-def configure(func):
-    """decorate func with mteval.configure if you want to configure your mteval ***when the decoder is loaded***"""
-    _CONFIGURE_.append(func)
-    return func
+
+EXPECTED = None
+_OBJECTS_ = {}
 
 
-def precomp(func):
+class EvaluationMetric(object):
+
+    def __init__(self, alias):
+        self.alias_ = alias
+
+    @property
+    def alias(self):
+        return self.alias_
+
+    def configure(self, config):
+        pass
+
+    def prepare_training(self, source, references, hypotheses):
+        raise NotImplementedError('This method must be overloaded')
+
+    def prepare_decoding(self, source, evidence, hypotheses):
+        raise NotImplementedError('This method must be overloaded')
+
+    def loss(self, c, r):
+        """
+        Returns the loss incurred in choosing candidate c when r is the reference.
+        :param int c: candidate
+        :param int r: reference
+        :return: loss
+        """
+        raise NotImplementedError('This method must be overloaded')
+
+    def coloss(self, c):
+        """
+        Returns the consensus loss, where the reference is represented by a vector of expected features.
+        :param int c: candidate
+        :return: consensus loss
+        """
+        raise NotImplementedError('This method must be overloaded')
+
+    def cleanup(self):
+        pass
+
+    def reset(self):
+        pass
+
+
+def load(metrics, subset=None):
     """
-    Use this decorator to precompute stuff for an entire training set.
-    func(training_set)
+    Load MT evaluation metrics.
+    :param dict metrics: alias => path to module
+    :param subset: if defined, loads only a subset of the metrics
     """
-    _PRECOMP_.append(func)
-
-
-def training(func):
-    """func(src, references, hypotheses, consensus=False)"""
-    _TRAINING_.append(func)
-
-
-def decoding(func):
-    """func(src, evidence, hypotheses, consensus=False)"""
-    _DECODING_.append(func)
-
-
-def compare(func):
-    """
-    Use this decorator to compute a gain function for decoding
-    :param func: func(c, r) -> float
-    """
-    logging.info('@chisel.mteval.compare %s', func.__name__)
-    _COMPARE_[func.__name__] = func
-
-
-def assess(func):
-    """
-    Use this decorator to compute a gain function for training
-    :param func: func(c) -> float
-    """
-    logging.info('@chisel.mteval.assess %s', func.__name__)
-    _ASSESS_[func.__name__] = func
-
-
-def cleanup(func):
-    """decorate func with mteval.cleanup in order to prepare your mteval to deal with a new source
-    func()
-    """
-    _CLEANUP_.append(func)
-    return func
-
-
-def reset(func):
-    """decorate func with mteval.reset in order to prepare your mteval to deal with a new training set
-    func()"""
-    _RESET_.append(func)
-    return func
-
-
-# the following is not meant to be used as decorators
-
-
-def load_metrics(metrics):
-    for mdef in metrics:
-        if os.path.isfile(mdef):
+    global _OBJECTS_
+    _OBJECTS_ = {}
+    for alias, path in metrics.iteritems():
+        if subset is not None and alias not in subset:
+            logging.debug('mteval.load was requested to ignore: %s', alias)
+            continue
+        module = None
+        if os.path.isfile(path):
             try:
-                logging.info('Loading mteval definitions from file %s', mdef)
-                prefix = os.path.dirname(mdef)
+                logging.info('Importing %s from file %s', alias, path)
+                prefix = os.path.dirname(path)
                 sys.path.append(prefix)
-                __import__(os.path.basename(mdef).replace('.py', ''))
+                module = __import__(os.path.basename(path).replace('.py', ''))
                 sys.path.remove(prefix)
             except:
-                logging.error('Could not load feature definitions from file %s', mdef)
+                logging.error('Could not find %s definition in %s', alias, path)
         else:
             try:
-                logging.info('Loading mteval definitions from module %s', mdef)
-                importlib.import_module(mdef)
+                logging.info('Importing %s from module %s', alias, path)
+                module = importlib.import_module(path)
             except:
-                logging.error('Could not load mteval defitions from module %s', mdef)
+                logging.error('Could not find %s defition in %s', alias, path)
+        if module is not None:
+            _OBJECTS_[alias] = module.construct(alias)
 
 
-def configure_metrics(config):
+def config_view(config, alias):
+    """returns a view of the config dict contain only the keys associated with a certain metric"""
+    return {k[len(alias) + 1:]: v for k, v in config.iteritems() if k.startswith('{0}.'.format(alias))}
+
+
+def configure(config):
     """configure mteval modules"""
-    [func(config) for func in _CONFIGURE_]
+    for alias, metric in _OBJECTS_.iteritems():
+        view = config_view(config, alias)
+        logging.info('Configuring %s: %s', alias, view)
+        metric.configure(view)
 
 
-def prepare_training(source, references, hypotheses, consensus=False):
-    [func(source, references, hypotheses, consensus) for func in _TRAINING_]
+def prepare_training(source, references, hypotheses):
+    [metric.prepare_training(source, references, hypotheses) for metric in _OBJECTS_.itervalues()]
 
 
-def prepare_decoding(source, evidence, hypotheses, consensus=False):
-    [func(source, evidence, hypotheses, consensus) for func in _DECODING_]
+def prepare_decoding(source, evidence, hypotheses):
+    [metric.prepare_decoding(source, evidence, hypotheses) for metric in _OBJECTS_.itervalues()]
 
 
-def comparisons(c, r):
-    return [(fname, func(c, r)) for func, fname in _COMPARE_.iteritems()]
+def loss(c, r, metric):
+    return _OBJECTS_[metric].loss(c, r)
 
 
-def comparison(c, r, metric):
-    return _COMPARE_[metric](c, r)
+def coloss(c, metric):
+    return _OBJECTS_[metric].coloss(c)
 
 
-def assessments(c, r):
-    return [(fname, func(c, r)) for func, fname in _ASSESS_.iteritems()]
+def cleanup():
+    [metric.cleanup() for metric in _OBJECTS_.itervalues()]
 
 
-def assessment(c, r, metric):
-    return _ASSESS_[metric](c, r)
+def reset():
+    [metric.reset() for metric in _OBJECTS_.itervalues()]
 
 
-def cleanup_metrics():
-    [func() for func in _CLEANUP_]
-
-
-def reset_metrics():
-    [func() for func in _RESET_]
-
-
-def sanity_check(metric_name):
-    return metric_name in _COMPARE_ and metric_name in _ASSESS_
+def sanity_check(metric):
+    return metric in _OBJECTS_

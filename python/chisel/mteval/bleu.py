@@ -1,72 +1,55 @@
 """
 @author waziz
 """
-
 import chisel.mteval as mteval
 import logging
 from _bleu import BLEU
 
-# dictionary that stores BLEU's configuration (e.g. max_order, smoothing)
-bleu_config = None
-# bleu wrapper
-decoding_bleu_wrapper = None
 
-@mteval.configure
-def configure(config):
-    global bleu_config
-    bleu_config = {}
-    if 'bleu.max_order' not in config:
-        logging.info('BLEU using default max_order=%d', BLEU.DEFAULT_MAX_ORDER)
-        bleu_config['max_order'] = BLEU.DEFAULT_MAX_ORDER
-    else:
-        bleu_config['max_order'] = config['bleu.max_order']
-    if 'bleu.smoothing' not in config:
-        logging.info('BLEU using default smoothing=%s', BLEU.DEFAULT_SMOOTHING)
-        bleu_config['smoothing'] = BLEU.DEFAULT_SMOOTHING
-    else:
-        bleu_config['smoothing'] = config['bleu.smoothing']
+class WrappedBLEU(mteval.EvaluationMetric):
 
+    def __init__(self, alias):
+        self.alias_ = alias
+        self.bleu_config_ = {}
+        self.decoding_bleu_wrapper_ = None
 
-@mteval.decoding
-def suffstats(src, evidence, hypotheses, consensus=False):
-    """
-    Compute sufficient statistics for BLEU
-    :param src:
-    :param EmpiricalDistribution evidence:
-    :param EmpiricalDistribution hypotheses:
-    """
-    assert evidence is hypotheses, 'For now BLEU decoding is supported with Yh == Ye'
-    global decoding_bleu_wrapper
-    decoding_bleu_wrapper = BLEU(evidence, **bleu_config)
+    @property
+    def alias(self):
+        return self.alias_
 
-@mteval.compare
-def bleu(c, r):
-    """
-    Compare candidate c to reference r
-    :param int c:
-    :param int r:
-    :return: bleu score
-    """
-    if r is mteval.EXPECTED:
-        return decoding_bleu_wrapper.cobleu(c)
-    else:
-        return decoding_bleu_wrapper.bleu(c, r)
+    def configure(self, config):
+        # copies configuration
+        self.bleu_config_ = dict(config)
+        # sets default values if necessary
+        if 'max_order' not in self.bleu_config_:
+            logging.info('BLEU using default max_order=%d', BLEU.DEFAULT_MAX_ORDER)
+            self.bleu_config_['max_order'] = BLEU.DEFAULT_MAX_ORDER
+        if 'smoothing' not in self.bleu_config_:
+            logging.info('BLEU using default smoothing=%s', BLEU.DEFAULT_SMOOTHING)
+            self.bleu_config_['smoothing'] = BLEU.DEFAULT_SMOOTHING
 
+    def prepare_decoding(self, src, evidence, hypotheses):
+        """
+        Compute sufficient statistics for BLEU
+        :param src:
+        :param EmpiricalDistribution evidence:
+        :param EmpiricalDistribution hypotheses:
+        """
+        assert evidence is hypotheses, 'For now BLEU decoding is supported with Yh == Ye'
+        self.decoding_bleu_wrapper_ = BLEU(evidence, **self.bleu_config_)
 
-@mteval.assess
-def bleu(c):
-    """
-    :type c: int
-    """
-    raise NotImplementedError('BLEU training is not yet supported')
+    def loss(self, c, r):
+        return 1 - self.decoding_bleu_wrapper_.bleu(c, r)
+
+    def coloss(self, c):
+        return 1 - self.decoding_bleu_wrapper_.cobleu(c)
+
+    def cleanup(self):
+        self.decoding_bleu_wrapper_ = None
+
+    def reset(self):
+        pass
 
 
-@mteval.cleanup
-def cleanup():
-    global decoding_bleu_wrapper
-    decoding_bleu_wrapper = None
-
-
-@mteval.reset
-def reset():
-    pass
+def construct(alias):
+    return WrappedBLEU(alias)

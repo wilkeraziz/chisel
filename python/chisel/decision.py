@@ -68,14 +68,13 @@ def make_decisions(block, headers, options, fnames, gnames):
 
         if options.mbr or options.consensus:
             mteval.prepare_decoding(None, empdist, empdist)
-
             if options.mbr:
                 eb_gains = MBR(empdist, options.metric, normalise=True)
-                solutions['MBR'] = pack_nbest(empdist, eb_gains, options.nbest, reward=True)
+                solutions['MBR'] = pack_nbest(empdist, eb_gains, options.nbest, reward=False)
 
             if options.consensus:
                 co_gains = consensus(empdist, options.metric, normalise=True)
-                solutions['consensus'] = pack_nbest(empdist, co_gains, options.nbest, reward=True)
+                solutions['consensus'] = pack_nbest(empdist, co_gains, options.nbest, reward=False)
 
         return solutions
     except:
@@ -178,23 +177,21 @@ def main():
     # loads mteval modules
     if config.has_section('chisel:metrics'):
         metrics_map = section_literal_eval(config.items('chisel:metrics'))
-        mteval.load_metrics(metrics_map.itervalues())
     else:
-        logging.info('Loading BLEU by default')
-        mteval.load_metrics(['chisel.mteval.bleu'])
-
-    # metrics' configuration
-    if config.has_section('chisel:metrics:config'):
-        metrics_config = section_literal_eval(config.items('chisel:metrics:config'))
-    else:
-        metrics_config = {}
-    logging.info('chisel:metrics:config: %s', metrics_config)
+        metrics_map = {'bleu': 'chisel.mteval.bleu'}
+    mteval.load(metrics_map, frozenset([options.metric]))
 
     if not mteval.sanity_check(options.metric):
         raise Exception("Perhaps you forgot to include the metric '%s' in the configuration file?" % options.metric)
 
+    # configure mteval metrics
+    if config.has_section('chisel:metrics:config'):
+        metrics_config = section_literal_eval(config.items('chisel:metrics:config'))
+    else:
+        metrics_config = {}
+    logging.debug('chisel:metrics:config: %s', metrics_config)
     # configure metrics
-    mteval.configure_metrics(metrics_config)
+    mteval.configure(metrics_config)
 
     # gather decision rules to be run
     decision_rules = []
@@ -241,7 +238,7 @@ def main():
     single_threaded = True
     if single_threaded:
         for jid, job in jobs:
-            decisions = make_decisions(job, headers, options, fnames, gnames)
+            decisions = make_decisions(job, headers, options, target_features, proxy_features)
             for rule, ranking in decisions.iteritems():
                 print '[%d] %s' % (jid, rule)
                 for solution in ranking:
@@ -277,4 +274,6 @@ def main():
 
 
 if __name__ == '__main__':
+    #import cProfile
+    #cProfile.run('main()')
     main()

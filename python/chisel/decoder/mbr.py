@@ -44,7 +44,7 @@ def MBR(empdist, metric, normalise=False):
     scores = np.array([0.0] * M)
     for h, hyp in enumerate(empdist):
         for r, ref in enumerate(empdist):
-            score = mteval.comparison(c=h, r=r, metric=metric)
+            score = mteval.loss(c=h, r=r, metric=metric)
             scores[h] += score * empdist.p(r, normalise)
     return scores
 
