@@ -1,6 +1,6 @@
 """
-To add support to your own mteval metric, you need to wrap it exposing the interface in
-mteval.EvaluationMetric (pretty simple).
+To add support to your own mteval metric, you need to wrap it exposing the interface mteval.LossFunction
+
 Your module should also define a constructor function named 'construct' which takes exactly one string parameter:
 
 def construct(alias):
@@ -56,7 +56,7 @@ EXPECTED = None
 _OBJECTS_ = {}
 
 
-class EvaluationMetric(object):
+class LossFunction(object):
 
     def __init__(self, alias):
         self.alias_ = alias

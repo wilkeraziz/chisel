@@ -16,7 +16,7 @@ import numpy as np
 from Levenshtein import distance as levdistance
 
 
-class WrappedLevenshtein(mteval.EvaluationMetric):
+class WrappedLevenshtein(mteval.LossFunction):
 
     def __init__(self, alias):
         super(WrappedLevenshtein, self).__init__(alias)

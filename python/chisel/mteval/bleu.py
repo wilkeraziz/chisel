@@ -6,7 +6,7 @@ import logging
 from _bleu import BLEU
 
 
-class WrappedBLEU(mteval.EvaluationMetric):
+class WrappedBLEU(mteval.LossFunction):
 
     def __init__(self, alias):
         self.alias_ = alias
