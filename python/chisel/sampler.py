@@ -12,7 +12,8 @@ from functools import partial
 from ConfigParser import RawConfigParser
 import ff
 import cdeclib
-from util import fpairs2str, dict2str, fmap_dot, scaled_fmap, section_literal_eval
+from util import fpairs2str, dict2str, fmap_dot, scaled_fmap
+from util.config import configure, section_literal_eval
 from util.io import SegmentMetaData
 
 
@@ -233,9 +234,12 @@ def argparse_and_config():
     parser.add_argument('--workspace', '-w',
                         type=str, default=None,
                         help='samples will be written to $workspace/samples/$i')
-    parser.add_argument("--scaling",
+    parser.add_argument("--target-scaling",
                         type=float, default=1.0,
-                        help="scaling parameter for the model (default: 1.0)")
+                        help="scaling parameter for the target model (default: 1.0)")
+    parser.add_argument("--proxy-scaling",
+                        type=float, default=1.0,
+                        help="scaling parameter for the proxy model (default: 1.0)")
     parser.add_argument("--samples",
                         type=int, default=100,
                         help="number of samples (default: 100)")
@@ -255,53 +259,17 @@ def argparse_and_config():
                         type=str, default='none',
                         choices=['n', 'p', 'q', 'r', 'nr'],
                         help='sort results by a specific column')
+    parser.add_argument('--verbose', '-v',
+                        action='store_true',
+                        help='increases verbosity')
 
-    #parser.add_argument("--proxy", type=str, help="feature weights (proxy model)")
-    #parser.add_argument("--target", type=str, help="feature weights (target model)")
-    #parser.add_argument("--cdec", type=str, help="cdec's config file")
-    #parser.add_argument("--resources", type=str, help="external resources config file")
+    args, config, failed = configure(parser,
+                                     set_defaults=['chisel:model', 'chisel:sampler'],
+                                     required_sections=['proxy', 'target', 'cdec'],
+                                     configure_logging=True)
+    logging.debug('arguments: %s', vars(args))
 
-    args = parser.parse_args()
-
-    # parse the config file
-    config = RawConfigParser()
-    # this is necessary in order not to lowercase the keys
-    config.optionxform = str
-    config.read(args.config)
-    # some command line options may be overwritten by the section 'chisel:sampler' in the config file
-    if config.has_section('chisel:sampler'):
-        sampler_options = section_literal_eval(config.items('chisel:sampler'))
-        parser.set_defaults(**sampler_options)
-        # reparse options (with new defaults) TODO: find a better way
-        args = parser.parse_args()
-
-    # overwrite global config file using command line specific config files
-    #if args.proxy:
-    #    config.replace('proxy', args.proxy)
-    #if args.target:
-    #    config.replace('target', args.target)
-    #if args.cdec:
-    #    config.replace('cdec', args.cdec)
-    #if args.resources:
-    #    config.replace('chisel:sampler:resources', args.resources)
-
-    # start logging
-    logging.basicConfig(level=logging.INFO, format='%(levelname)s %(message)s')
-
-    # sanity checks
-    failed = False
-
-    # individual configurations
-    if not config.has_section('proxy'):
-        logging.error("add a [proxy] section to the config file or provide --proxy")
-        failed = True
-    if not config.has_section('target'):
-        logging.error("add a [target] section to the config file or provide --target")
-        failed = True
-    if not config.has_section('cdec'):
-        logging.error("add a [cdec] section to the config file or provide --cdec")
-        failed = True
-    # input format
+    # additional sanity checks: input format
     if args.input_format == 'plain' and args.grammars is None:
         logging.error("'--input-format plain' requires '--grammars <path>'")
         failed = True
@@ -324,15 +292,15 @@ def main():
 
     # cdec configuration string
     cdec_cfg_string = cdeclib.make_cdec_config_string(config.items('cdec'), config.items('cdec:features'))
-    logging.info('cdec.ini:\n%s', cdec_cfg_string)
+    logging.debug('cdec.ini: %s', repr(cdec_cfg_string))
 
     # parameters of the instrumental distribution
-    proxy_weights = scaled_fmap(section_literal_eval(config.items('proxy')), options.scaling)
-    logging.info('proxy: %s', dict2str(proxy_weights, sort=True))
+    proxy_weights = scaled_fmap(section_literal_eval(config.items('proxy')), options.proxy_scaling)
+    logging.debug('proxy (scaling=%f): %s', options.proxy_scaling, dict2str(proxy_weights, sort=True))
 
     # parameters of the target distribution
-    target_weights = scaled_fmap(section_literal_eval(config.items('target')), options.scaling)
-    logging.info('target: %s', dict2str(target_weights, sort=True))
+    target_weights = scaled_fmap(section_literal_eval(config.items('target')), options.target_scaling)
+    logging.debug('target (scaling=%f): %s', options.target_scaling, dict2str(target_weights, sort=True))
 
     # loads scorer modules
     if config.has_section('chisel:scorers'):
@@ -348,7 +316,7 @@ def main():
 
     # logs which features were added to the proxy
     extra_features = {k: v for k, v in target_weights.iteritems() if k not in proxy_weights}
-    logging.info('Extra features: %s', extra_features)
+    logging.debug('Extra features: %s', extra_features)
 
     # configure scorers
     ff.configure_scorers(scorers_config)

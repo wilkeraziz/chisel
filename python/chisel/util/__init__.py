@@ -1,11 +1,6 @@
 __author__ = 'waziz'
 
-from ast import literal_eval
 from itertools import izip
-
-
-def section_literal_eval(items):
-    return {k: literal_eval(v) for k, v in items}
 
 
 def scaled_fmap(fmap, scaling=1.0):

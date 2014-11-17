@@ -15,7 +15,8 @@ from util.io import read_sampled_derivations, next_block, read_block, list_numbe
 from smt import groupby, KBestSolution
 from decoder.estimates import EmpiricalDistribution
 from functools import partial
-from util import section_literal_eval, scaled_fmap, dict2str
+from util import scaled_fmap, dict2str
+from util.config import section_literal_eval, configure
 import mteval
 
 
@@ -118,9 +119,12 @@ def argparse_and_config():
     parser.add_argument('config',
                         type=str,
                         help="configuration file")
-    parser.add_argument("--scaling",
+    parser.add_argument("--target-scaling",
                         type=float, default=1.0,
-                        help="scaling parameter for the model (default: 1.0)")
+                        help="scaling parameter for the target model (default: 1.0)")
+    parser.add_argument("--proxy-scaling",
+                        type=float, default=1.0,
+                        help="scaling parameter for the proxy model (default: 1.0)")
     parser.add_argument("--map",
                         action='store_true',
                         help="MAP decoding")
@@ -142,23 +146,18 @@ def argparse_and_config():
     parser.add_argument("--workspace", '-w',
                         type=str, default=None,
                         help="where samples can be found and where decisions are placed")
+    parser.add_argument('--verbose', '-v',
+                        action='store_true',
+                        help='increases verbosity')
 
-    # gather options
-    args = parser.parse_args()
-    logging.basicConfig(level=logging.INFO, format='%(levelname)s %(message)s')
+    args, config, failed = configure(parser,
+                                     set_defaults=['chisel:model', 'chisel:decision'],
+                                     required_sections=['proxy', 'target'],
+                                     configure_logging=True)
+    logging.debug('arguments: %s', vars(args))
 
-    # parse config file
-    config = RawConfigParser()
-    # this is necessary in order not to lowercase the keys
-    config.optionxform = str
-    config.read(args.config)
-    # some command line options may be overwritten by the section 'chisel:sampler' in the config file
-    if config.has_section('chisel:decision'):
-        decision_options = section_literal_eval(config.items('chisel:decision'))
-        parser.set_defaults(**decision_options)
-        # reparse options (with new defaults) TODO: find a better way
-        args = parser.parse_args()
-
+    if failed:
+        sys.exit(1)
 
     return args, config
 
@@ -167,14 +166,14 @@ def main():
     options, config = argparse_and_config()
 
     # parameters of the instrumental distribution
-    proxy_weights = scaled_fmap(section_literal_eval(config.items('proxy')), options.scaling)
-    gnames = sorted(proxy_weights.iterkeys())
-    logging.info('proxy: %s', dict2str(proxy_weights, sort=True))
+    proxy_weights = scaled_fmap(section_literal_eval(config.items('proxy')), options.proxy_scaling)
+    proxy_features = sorted(proxy_weights.iterkeys())
+    logging.debug('proxy (scaling=%f): %s', options.proxy_scaling, dict2str(proxy_weights, sort=True))
 
     # parameters of the target distribution
-    target_weights = scaled_fmap(section_literal_eval(config.items('target')), options.scaling)
-    fnames = sorted(target_weights.iterkeys())
-    logging.info('target: %s', dict2str(target_weights, sort=True))
+    target_weights = scaled_fmap(section_literal_eval(config.items('target')), options.target_scaling)
+    target_features = sorted(target_weights.iterkeys())
+    logging.debug('target (scaling=%f): %s', options.target_scaling, dict2str(target_weights, sort=True))
 
     # loads mteval modules
     if config.has_section('chisel:metrics'):
@@ -258,8 +257,8 @@ def main():
         pool.map(partial(decide_and_save,
                          headers=headers,
                          options=options,
-                         fnames=fnames,
-                         gnames=gnames,
+                         fnames=target_features,
+                         gnames=proxy_features,
                          output_dirs=output_dirs),
                  jobs)
     else:
@@ -268,8 +267,8 @@ def main():
         results = pool.map(partial(make_decisions,
                                    headers=headers,
                                    options=options,
-                                   fnames=fnames,
-                                   gnames=gnames), (job for jid, job in jobs))
+                                   fnames=target_features,
+                                   gnames=proxy_features), (job for jid, job in jobs))
         for (j, job), decisions in izip(jobs, results):
             for rule, ranking in decisions.iteritems():
                 print '[%d] %s' % (j, rule)
