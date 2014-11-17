@@ -1,8 +1,6 @@
 """
 @author waziz
 """
-
-from ConfigParser import RawConfigParser
 import logging
 import sys
 import traceback
@@ -49,8 +47,9 @@ def pack_nbest(empdist, target, nbest=-1, reward=True):
                                solution=empdist.solution(i)) for k, i in enumerate(ranked))
 
 
-def make_decisions(block, headers, options, fnames, gnames):
+def make_decisions(job_desc, headers, options, fnames, gnames):
     # this code runs in a Pool, thus we wrap in try/except in order to have more informative exceptions
+    jid, block = job_desc
     try:
         derivations = read_sampled_derivations(iter(block), headers)
         empdist = EmpiricalDistribution(groupby(derivations, key=lambda d: d.tree.projection),
@@ -77,6 +76,7 @@ def make_decisions(block, headers, options, fnames, gnames):
                 solutions['consensus'] = pack_nbest(empdist, co_gains, options.nbest, reward=False)
 
         return solutions
+
     except:
         raise Exception(''.join(traceback.format_exception(*sys.exc_info())))
 
@@ -93,10 +93,10 @@ def create_output_dir(workspace, decision_rule, metric_name=None):
 
 def decide_and_save(job_desc, headers, options, fnames, gnames, output_dirs):
     # this code runs in a Pool, thus we wrap in try/except in order to have more informative exceptions
+    jid, block = job_desc
     try:
-        jid, block = job_desc
         # make decisions
-        decisions = make_decisions(block, headers, options, fnames, gnames)
+        decisions = make_decisions(job_desc, headers, options, fnames, gnames)
         # write to file if necessary
         for rule, ranking in decisions.iteritems():
             with open('{0}/{1}'.format(output_dirs[rule], jid), 'w') as out:
@@ -106,12 +106,12 @@ def decide_and_save(job_desc, headers, options, fnames, gnames, output_dirs):
                                                       separator='\t', named=False,
                                                       fnames=fnames, gnames=gnames)
                 print >> out
+
     except:
-        raise Exception(''.join(traceback.format_exception(*sys.exc_info())))
+        raise Exception('job={0} exception={1}'.format(jid, ''.join(traceback.format_exception(*sys.exc_info()))))
 
 
 def argparse_and_config():
-
     parser = argparse.ArgumentParser(description='Applies a decision rule to a sample.',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
@@ -238,7 +238,7 @@ def main():
     single_threaded = True
     if single_threaded:
         for jid, job in jobs:
-            decisions = make_decisions(job, headers, options, target_features, proxy_features)
+            decisions = make_decisions((jid, job), headers, options, target_features, proxy_features)
             for rule, ranking in decisions.iteritems():
                 print '[%d] %s' % (jid, rule)
                 for solution in ranking:
@@ -250,7 +250,7 @@ def main():
     if options.workspace:
         # writing to files
         pool = Pool(options.jobs)
-        #job_desc, headers, options, fnames, gnames, output_dirs
+        # job_desc, headers, options, fnames, gnames, output_dirs
         pool.map(partial(decide_and_save,
                          headers=headers,
                          options=options,
@@ -265,15 +265,15 @@ def main():
                                    headers=headers,
                                    options=options,
                                    fnames=target_features,
-                                   gnames=proxy_features), (job for jid, job in jobs))
-        for (j, job), decisions in izip(jobs, results):
+                                   gnames=proxy_features), jobs)
+        for (jid, job), decisions in izip(jobs, results):
             for rule, ranking in decisions.iteritems():
-                print '[%d] %s' % (j, rule)
+                print '[%d] %s' % (jid, rule)
                 for solution in ranking:
                     print solution.format_str(keys=['p', 'q', 'n', 'yield'], separator=' ', named=True)
 
 
 if __name__ == '__main__':
-    #import cProfile
-    #cProfile.run('main()')
+    # import cProfile
+    # cProfile.run('main()')
     main()
