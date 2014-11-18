@@ -10,8 +10,8 @@ from multiprocessing import Pool
 from itertools import izip
 from decoder import MBR, MAP, consensus
 from util.io import read_sampled_derivations, next_block, read_block, list_numbered_files
-from smt import groupby, KBestSolution
 from decoder.estimates import EmpiricalDistribution
+from smt import groupby, KBestSolution
 from functools import partial
 from util import scaled_fmap, dict2str
 from util.config import section_literal_eval, configure
@@ -107,7 +107,7 @@ def decide_and_save(job_desc, headers, options, fnames, gnames, output_dirs):
                                                       separator='\t', named=False,
                                                       fnames=fnames, gnames=gnames)
                 print >> out
-
+        return {rule: solutions[0] for rule, solutions in decisions.iteritems()}
     except:
         raise Exception('job={0} exception={1}'.format(jid, ''.join(traceback.format_exception(*sys.exc_info()))))
 
@@ -146,9 +146,6 @@ def argparse_and_config():
     parser.add_argument("--workspace", '-w',
                         type=str, default=None,
                         help="where samples can be found and where decisions are placed")
-    parser.add_argument('--shuffle', '-s',
-                        action='store_true',
-                        help='shuffle jobs (with --workspace only)')
     parser.add_argument('--verbose', '-v',
                         action='store_true',
                         help='increases verbosity')
@@ -208,6 +205,7 @@ def main():
 
     samples_dir = None
     output_dirs = {}
+    one_best_files = {}
 
     # if a workspace has been set
     if options.workspace:
@@ -217,14 +215,18 @@ def main():
             raise Exception('If a workspace is set, samples are expected to be found under $workspace/samples')
         logging.info('Reading samples from %s', samples_dir)
         # create output folders
+        if not os.path.isdir('{0}/output'.format(options.workspace)):
+            os.makedirs('{0}/output'.format(options.workspace))
         # TODO: check whether decisions already exist (and warn the user)
         for rule in decision_rules:
             if rule == 'MAP':
                 output_dirs[rule] = create_output_dir(options.workspace, rule)
+                one_best_files[rule] = '{0}/output/{1}'.format(options.workspace, rule)
                 logging.info("Writing '%s' decisions to %s", rule, output_dirs[rule])
             else:
                 output_dirs[rule] = create_output_dir(options.workspace, rule, options.metric)
                 logging.info("Writing '%s' decisions to %s", rule, output_dirs[rule])
+                one_best_files[rule] = '{0}/output/{1}-{2}'.format(options.workspace, rule, options.metric)
 
     # TODO: generalise this
     headers = {'derivation': 'd', 'vector': 'v', 'score': 'p', 'count': 'n', 'importance': 'r'}
@@ -237,8 +239,6 @@ def main():
         input_files = list_numbered_files(samples_dir)
         jobs = [(fid, read_block(open(input_file, 'r'))) for fid, input_file in input_files]
         logging.info('%d jobs', len(jobs))
-        if options.shuffle:
-            shuffle(jobs)
 
     """
     single_threaded = True
@@ -258,13 +258,20 @@ def main():
         pool = Pool(options.jobs)
         # job_desc, headers, options, fnames, gnames, output_dirs
 
-        pool.map(partial(decide_and_save,
+        results = pool.map(partial(decide_and_save,
                          headers=headers,
                          options=options,
                          fnames=target_features,
                          gnames=proxy_features,
                          output_dirs=output_dirs),
                  jobs)
+
+        for rule in decision_rules:
+            with open(one_best_files[rule], 'wb') as fout:
+                for decisions in results:
+                    solution = decisions[rule]
+                    print >> fout, solution.solution.Dy.projection
+
     else:
         # writing to stdout
         pool = Pool(options.jobs)
