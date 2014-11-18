@@ -108,6 +108,12 @@ class Result(object):
     def samples(self):
         return self.samples_
 
+    def n_derivations(self):
+        return len(self.samples_)
+
+    def n_strings(self):
+        return len(frozenset(sample.sample_str for sample in self.samples_))
+
     def sorted(self, opt):
         if opt == 'n':
             return sorted(self.samples_, key=lambda s: s.count, reverse=True)
@@ -155,7 +161,7 @@ def sample(segment, n_samples, proxy_weights, target_weights, cdec_config_str=''
         # groups vectors associated with equivalent derivations
         counter = collections.Counter(frozenset(fmap.iteritems()) for fmap, _ in sample_info)
         # compute target vectors
-        #qdots, pdots = [], []
+        # qdots, pdots = [], []
         for q_fpairs, count in counter.iteritems():
             # start with the features that are used in the proxy
             fmap = dict(q_fpairs)
@@ -207,6 +213,7 @@ def write_to_file(result, odir, columns, sortby):
             for s in result.sorted(sortby):
                 print >> out, s.format_str(columns)
             print >> out
+        return result.segment.id, result.n_derivations(), result.n_strings()
     except:
         raise Exception('job={0} exception={1}'.format(result.segment.id,
                                                        ''.join(traceback.format_exception(*sys.exc_info()))))
@@ -227,7 +234,7 @@ def write_to_stdout(result, columns, sortby):
 
 
 def sample_and_save(odir, columns, sortby, *args, **kwargs):
-    write_to_file(sample(*args, **kwargs), odir, columns, sortby)
+    return write_to_file(sample(*args, **kwargs), odir, columns, sortby)
 
 
 def argparse_and_config():
@@ -339,15 +346,22 @@ def main():
 
     pool = Pool(options.jobs)
     # distribute jobs
-    pool.map(partial(sample_and_save,
-                     output_dir,
-                     columns,
-                     options.sortby,
-                     n_samples=options.samples,
-                     proxy_weights=proxy_weights,
-                     target_weights=target_weights,
-                     cdec_config_str=cdec_cfg_string),
-             segments)
+    results = pool.map(partial(sample_and_save,
+                               output_dir,
+                               columns,
+                               options.sortby,
+                               n_samples=options.samples,
+                               proxy_weights=proxy_weights,
+                               target_weights=target_weights,
+                               cdec_config_str=cdec_cfg_string),
+                       segments)
+
+    # summary of samples
+    try:
+        from tabulate import tabulate
+        print tabulate(results, headers=['job', 'derivations', 'strings'], tablefmt='pipe')
+    except ImportError:
+        logging.info('Consider installing tabulate for some nice summaries')
 
 
 if __name__ == '__main__':

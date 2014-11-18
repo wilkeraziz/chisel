@@ -13,6 +13,7 @@ I have added a few features to some of the dependencies below, these changes mig
 * cdec 
 * jieba (for Chinese segmentation)
 * numpy
+* tabulate (for nice output)
 
 ## Installing
 
