@@ -15,6 +15,7 @@ import cdeclib
 from util import fpairs2str, dict2str, fmap_dot, scaled_fmap
 from util.config import configure, section_literal_eval
 from util.io import SegmentMetaData
+import traceback
 
 
 class ImportanceSample(object):
@@ -145,7 +146,7 @@ def sample(segment, n_samples, proxy_weights, target_weights, cdec_config_str=''
     # header = '\t'.join(['#count', '#translation', '#r', '#qmap', '#qdot', '#pmap', '#pdot'])
     # print header
     # for now we do not have access to alignment
-    #ostream = [header]
+    # ostream = [header]
     is_samples = []
     for sample_str, sample_info in sorted(q_samples.iteritems(), key=lambda pair: len(pair[1]), reverse=True):
         # print >> sys.stderr, len(sample_info), sample_str
@@ -199,12 +200,16 @@ def write_to_file(result, odir, columns, sortby):
     :param odir: output directory
     """
     # log results
-    header = '\t'.join('#{0}'.format(c) for c in columns)
-    with open('{0}/{1}'.format(odir, result.segment.id), 'w') as out:
-        print >> out, header
-        for s in result.sorted(sortby):
-            print >> out, s.format_str(columns)
-        print >> out
+    try:
+        header = '\t'.join('#{0}'.format(c) for c in columns)
+        with open('{0}/{1}'.format(odir, result.segment.id), 'w') as out:
+            print >> out, header
+            for s in result.sorted(sortby):
+                print >> out, s.format_str(columns)
+            print >> out
+    except:
+        raise Exception('job={0} exception={1}'.format(result.segment.id,
+                                                       ''.join(traceback.format_exception(*sys.exc_info()))))
 
 
 def write_to_stdout(result, columns, sortby):
@@ -231,7 +236,7 @@ def argparse_and_config():
 
     parser.add_argument('config',
                         type=str, help='configuration file')
-    parser.add_argument('--workspace', '-w',
+    parser.add_argument('workspace',
                         type=str, default=None,
                         help='samples will be written to $workspace/samples/$i')
     parser.add_argument("--target-scaling",
@@ -247,7 +252,7 @@ def argparse_and_config():
                         type=str, default='cdec',
                         choices=['plain', 'cdec'],
                         help="'plain': one input sentence per line and requires --grammars; "
-                             "'cdec': sgml-formatted")
+                             "'cdec': one input sentence per line plus a grammar path (sgml-formatted)")
     parser.add_argument("--grammars",
                         type=str,
                         help="where to find grammars (grammar files are expected to be named grammar.$i.sgm, "
@@ -283,12 +288,11 @@ def argparse_and_config():
 def main():
     options, config = argparse_and_config()
 
-    output_dir = None
-    if options.workspace:
-        output_dir = '{0}/samples'.format(options.workspace)
-        if not os.path.isdir(output_dir):
-            os.makedirs(output_dir)
-        logging.info('Writing output to: %s', output_dir)
+    # make output dir
+    output_dir = '{0}/samples'.format(options.workspace)
+    if not os.path.isdir(output_dir):
+        os.makedirs(output_dir)
+    logging.info('Writing samples to: %s', output_dir)
 
     # cdec configuration string
     cdec_cfg_string = cdeclib.make_cdec_config_string(config.items('cdec'), config.items('cdec:features'))
@@ -333,39 +337,17 @@ def main():
     # log results
     columns = ('n', 'r', 'p', 'q', 'd', 'v')
 
-    # for seg in segments:
-    #    write_to_stdout(sampling_wrapper_with_return(seg),
-    #                    columns,
-    #                    options.sortby)
-    #sys.exit(0)
-
-    if output_dir is None:
-        pool = Pool(options.jobs)
-        # distribute jobs
-        results = pool.map(partial(sample,
-                                   n_samples=options.samples,
-                                   proxy_weights=proxy_weights,
-                                   target_weights=target_weights,
-                                   cdec_config_str=cdec_cfg_string),
-                           segments)
-        # write to stdout after completing jobs
-        [write_to_stdout(result, columns, options.sortby) for result in results]
-    else:
-        pool = Pool(options.jobs)
-        # distribute jobs
-        pool.map(partial(sample_and_save,
-                         output_dir,
-                         columns,
-                         options.sortby,
-                         n_samples=options.samples,
-                         proxy_weights=proxy_weights,
-                         target_weights=target_weights,
-                         cdec_config_str=cdec_cfg_string),
-                 segments)
-
-        # alternative = {'derivation':'translation', 'vector':'pmap', 'score':'r', 'count':'count'}
-        #solutions = decision.read_solutions(iter(ostream), alternative)
-        #decision.importance_sampling(solutions, options.top, importance = lambda sample : sample.normscore)
+    pool = Pool(options.jobs)
+    # distribute jobs
+    pool.map(partial(sample_and_save,
+                     output_dir,
+                     columns,
+                     options.sortby,
+                     n_samples=options.samples,
+                     proxy_weights=proxy_weights,
+                     target_weights=target_weights,
+                     cdec_config_str=cdec_cfg_string),
+             segments)
 
 
 if __name__ == '__main__':

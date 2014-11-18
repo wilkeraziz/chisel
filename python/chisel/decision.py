@@ -7,16 +7,14 @@ import traceback
 import os
 import argparse
 from multiprocessing import Pool
-from itertools import izip
 from decoder import MBR, MAP, consensus
-from util.io import read_sampled_derivations, next_block, read_block, list_numbered_files
+from util.io import read_sampled_derivations, read_block, list_numbered_files
 from decoder.estimates import EmpiricalDistribution
 from smt import groupby, KBestSolution
 from functools import partial
 from util import scaled_fmap, dict2str
 from util.config import section_literal_eval, configure
 import mteval
-from random import shuffle
 
 
 def sort_by(empdist, scores, reward=True):
@@ -82,11 +80,11 @@ def make_decisions(job_desc, headers, options, fnames, gnames):
         raise Exception(''.join(traceback.format_exception(*sys.exc_info())))
 
 
-def create_output_dir(workspace, decision_rule, metric_name=None):
+def create_decision_rule_dir(workspace, decision_rule, metric_name=None):
     if metric_name is None:
-        output_dir = '{0}/{1}'.format(workspace, decision_rule)
+        output_dir = '{0}/decisions/{1}'.format(workspace, decision_rule)
     else:
-        output_dir = '{0}/{1}-{2}'.format(workspace, decision_rule, metric_name)
+        output_dir = '{0}/decisions/{1}-{2}'.format(workspace, decision_rule, metric_name)
     if not os.path.isdir(output_dir):
         os.makedirs(output_dir)
     return output_dir
@@ -119,6 +117,9 @@ def argparse_and_config():
     parser.add_argument('config',
                         type=str,
                         help="configuration file")
+    parser.add_argument("workspace",
+                        type=str, default=None,
+                        help="where samples can be found and where decisions are placed")
     parser.add_argument("--target-scaling",
                         type=float, default=1.0,
                         help="scaling parameter for the target model (default: 1.0)")
@@ -143,9 +144,6 @@ def argparse_and_config():
     parser.add_argument("--jobs", '-j',
                         type=int, default=2,
                         help="number of processes")
-    parser.add_argument("--workspace", '-w',
-                        type=str, default=None,
-                        help="where samples can be found and where decisions are placed")
     parser.add_argument('--verbose', '-v',
                         action='store_true',
                         help='increases verbosity')
@@ -203,88 +201,51 @@ def main():
     if options.consensus:
         decision_rules.append('consensus')
 
-    samples_dir = None
+    # check for input folder
+    samples_dir = '{0}/samples'.format(options.workspace)
+    if not os.path.isdir(samples_dir):
+        raise Exception('If a workspace is set, samples are expected to be found under $workspace/samples')
+    logging.info('Reading samples from %s', samples_dir)
+    # create output folders
+    if not os.path.isdir('{0}/output'.format(options.workspace)):
+        os.makedirs('{0}/output'.format(options.workspace))
     output_dirs = {}
     one_best_files = {}
-
-    # if a workspace has been set
-    if options.workspace:
-        # check for input folder
-        samples_dir = '{0}/samples'.format(options.workspace)
-        if not os.path.isdir(samples_dir):
-            raise Exception('If a workspace is set, samples are expected to be found under $workspace/samples')
-        logging.info('Reading samples from %s', samples_dir)
-        # create output folders
-        if not os.path.isdir('{0}/output'.format(options.workspace)):
-            os.makedirs('{0}/output'.format(options.workspace))
-        # TODO: check whether decisions already exist (and warn the user)
-        for rule in decision_rules:
-            if rule == 'MAP':
-                output_dirs[rule] = create_output_dir(options.workspace, rule)
-                one_best_files[rule] = '{0}/output/{1}'.format(options.workspace, rule)
-                logging.info("Writing '%s' decisions to %s", rule, output_dirs[rule])
-            else:
-                output_dirs[rule] = create_output_dir(options.workspace, rule, options.metric)
-                logging.info("Writing '%s' decisions to %s", rule, output_dirs[rule])
-                one_best_files[rule] = '{0}/output/{1}-{2}'.format(options.workspace, rule, options.metric)
+    # TODO: check whether decisions already exist (and warn the user)
+    for rule in decision_rules:
+        if rule == 'MAP':
+            output_dirs[rule] = create_decision_rule_dir(options.workspace, rule)
+            one_best_files[rule] = '{0}/output/{1}'.format(options.workspace, rule)
+        else:
+            output_dirs[rule] = create_decision_rule_dir(options.workspace, rule, options.metric)
+            one_best_files[rule] = '{0}/output/{1}-{2}'.format(options.workspace, rule, options.metric)
+        logging.info("Writing '%s' solutions to %s", rule, output_dirs[rule])
+        logging.info("Writing 1-best '%s' yields to %s", rule, one_best_files[rule])
 
     # TODO: generalise this
     headers = {'derivation': 'd', 'vector': 'v', 'score': 'p', 'count': 'n', 'importance': 'r'}
 
-    # read jobs from stdin
-    if samples_dir is None:
-        jobs = [(bid, block) for bid, block in enumerate(next_block(sys.stdin))]
-        logging.info('%d jobs', len(jobs))
-    else:
-        input_files = list_numbered_files(samples_dir)
-        jobs = [(fid, read_block(open(input_file, 'r'))) for fid, input_file in input_files]
-        logging.info('%d jobs', len(jobs))
-
-    """
-    single_threaded = True
-    if single_threaded:
-        for jid, job in jobs:
-            decisions = make_decisions((jid, job), headers, options, target_features, proxy_features)
-            for rule, ranking in decisions.iteritems():
-                print '[%d] %s' % (jid, rule)
-                for solution in ranking:
-                    print solution.format_str(keys=['p', 'q', 'n', 'yield'], separator=' ', named=True)
-        sys.exit(0)
-    """
+    # read jobs from workspace
+    input_files = list_numbered_files(samples_dir)
+    jobs = [(fid, read_block(open(input_file, 'r'))) for fid, input_file in input_files]
+    logging.info('%d jobs', len(jobs))
 
     # run jobs in parallel
-    if options.workspace:
-        # writing to files
-        pool = Pool(options.jobs)
-        # job_desc, headers, options, fnames, gnames, output_dirs
-
-        results = pool.map(partial(decide_and_save,
-                         headers=headers,
-                         options=options,
-                         fnames=target_features,
-                         gnames=proxy_features,
-                         output_dirs=output_dirs),
-                 jobs)
-
-        for rule in decision_rules:
-            with open(one_best_files[rule], 'wb') as fout:
-                for decisions in results:
-                    solution = decisions[rule]
-                    print >> fout, solution.solution.Dy.projection
-
-    else:
-        # writing to stdout
-        pool = Pool(options.jobs)
-        results = pool.map(partial(make_decisions,
-                                   headers=headers,
-                                   options=options,
-                                   fnames=target_features,
-                                   gnames=proxy_features), jobs)
-        for (jid, job), decisions in izip(jobs, results):
-            for rule, ranking in decisions.iteritems():
-                print '[%d] %s' % (jid, rule)
-                for solution in ranking:
-                    print solution.format_str(keys=['p', 'q', 'n', 'yield'], separator=' ', named=True)
+    pool = Pool(options.jobs)
+    # run decision rules and save them to files
+    results = pool.map(partial(decide_and_save,
+                               headers=headers,
+                               options=options,
+                               fnames=target_features,
+                               gnames=proxy_features,
+                               output_dirs=output_dirs),
+                       jobs)
+    # save the 1-best solution for each decision rule in a separate file
+    for rule in decision_rules:
+        with open(one_best_files[rule], 'wb') as fout:
+            for decisions in results:
+                best = decisions[rule]  # instance of KBestSolution
+                print >> fout, best.solution.Dy.projection
 
 
 if __name__ == '__main__':
