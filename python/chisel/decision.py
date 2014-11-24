@@ -230,6 +230,16 @@ def main():
     jobs = [(fid, read_block(open(input_file, 'r'))) for fid, input_file in input_files]
     logging.info('%d jobs', len(jobs))
 
+
+    for job in jobs:
+        decide_and_save(job, headers=headers,
+                               options=options,
+                               fnames=target_features,
+                               gnames=proxy_features,
+                               output_dirs=output_dirs)
+
+    sys.exit(0)
+
     # run jobs in parallel
     pool = Pool(options.jobs)
     # run decision rules and save them to files
@@ -249,6 +259,6 @@ def main():
 
 
 if __name__ == '__main__':
-    # import cProfile
-    # cProfile.run('main()')
+    #import cProfile
+    #cProfile.run('main()')
     main()

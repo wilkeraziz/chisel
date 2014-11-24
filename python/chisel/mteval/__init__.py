@@ -74,12 +74,27 @@ class LossFunction(object):
     def prepare_decoding(self, source, evidence, hypotheses):
         raise NotImplementedError('This method must be overloaded')
 
+    def training_loss(self, c):
+        """
+        Returns the loss incurred in choosing candidate c agains the set of references
+        :param int c: candidate
+        :return: loss
+        """
+        raise NotImplementedError('This method must be overloaded')
+
     def loss(self, c, r):
         """
         Returns the loss incurred in choosing candidate c when r is the reference.
         :param int c: candidate
         :param int r: reference
         :return: loss
+        """
+        raise NotImplementedError('This method must be overloaded')
+
+    def training_coloss(self):
+        """
+        Returns the consensus loss, where the candidate is represented by a vector of expected features.
+        :return: consensus loss
         """
         raise NotImplementedError('This method must be overloaded')
 

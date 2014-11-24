@@ -3,7 +3,7 @@
 """
 import chisel.mteval as mteval
 import logging
-from _bleu import BLEU
+from _bleu2 import BLEU, DecodingBLEU, TrainingBLEU
 
 
 class WrappedBLEU(mteval.LossFunction):
@@ -12,6 +12,7 @@ class WrappedBLEU(mteval.LossFunction):
         self.alias_ = alias
         self.bleu_config_ = {}
         self.decoding_bleu_wrapper_ = None
+        self.training_bleu_wrapper_ = None
 
     @property
     def alias(self):
@@ -30,16 +31,28 @@ class WrappedBLEU(mteval.LossFunction):
 
     def prepare_decoding(self, src, evidence, hypotheses):
         """
-        Compute sufficient statistics for BLEU
+        Compute sufficient statistics for BLEU in decoding mode
         :param src:
         :param EmpiricalDistribution evidence:
         :param EmpiricalDistribution hypotheses:
         """
         assert evidence is hypotheses, 'For now BLEU decoding is supported with Yh == Ye'
-        self.decoding_bleu_wrapper_ = BLEU(evidence, **self.bleu_config_)
+        self.decoding_bleu_wrapper_ = DecodingBLEU(evidence, evidence.copy_posterior(), **self.bleu_config_)
+
+    def prepare_training(self, source, references, hypotheses):
+        """
+        Compute sufficient statistic for BLEU in training mode
+        :param source:
+        :param references:
+        :param EmpiricalDistribution hypotheses:
+        :return:
+        """
+        self.training_bleu_wrapper_ = TrainingBLEU(references, hypotheses, **self.bleu_config_)
+
+    def training_loss(self, c):
+        return 1 - self.training_bleu_wrapper_.bleu(c)
 
     def loss(self, c, r):
-        #print 'BLEU(%d, %d): %f' % (c, r, self.decoding_bleu_wrapper_.bleu(c, r))
         return 1 - self.decoding_bleu_wrapper_.bleu(c, r)
 
     def coloss(self, c):
