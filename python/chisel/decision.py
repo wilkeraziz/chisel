@@ -230,7 +230,8 @@ def main():
     jobs = [(fid, read_block(open(input_file, 'r'))) for fid, input_file in input_files]
     logging.info('%d jobs', len(jobs))
 
-
+    """
+    # sometimes I use this for profiling (gotta write a better switch)
     for job in jobs:
         decide_and_save(job, headers=headers,
                                options=options,
@@ -239,6 +240,7 @@ def main():
                                output_dirs=output_dirs)
 
     sys.exit(0)
+    """
 
     # run jobs in parallel
     pool = Pool(options.jobs)
