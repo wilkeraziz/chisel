@@ -48,3 +48,17 @@ def MBR(empdist, metric, normalise=False):
             scores[h] += score * empdist.p(r, normalise)
     return scores
 
+def MBR_training(empdist, metric, normalise=False):
+    """
+    :param EmpiricalDistribution empdist: for now MBR assumes Yh == Ye (see above)
+    :param metric:
+    :param normalise:
+    :return:
+    """
+    M = len(empdist)
+    scores = np.array([0.0] * M)
+    for h, hyp in enumerate(empdist):
+        score = mteval.training_loss(c=h, metric=metric)
+        scores[h] += score * empdist.p(c, normalise)
+    return scores
+

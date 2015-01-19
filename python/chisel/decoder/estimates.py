@@ -3,6 +3,7 @@ __author__ = 'waziz'
 from chisel.smt import Solution
 from chisel.util import npvec2str
 import numpy as np
+import sys
 
 
 class EmpiricalDistribution(object):
@@ -31,44 +32,61 @@ class EmpiricalDistribution(object):
         # where n(d) is the number of times d was sampled
         # the normalised posterior is p(y) = up(y) / \sum_y up(y)
 
-        # raw counts
-        self.counts_ = np.array([Dy.count() for Dy in support])
+        # From here, each position in a vector represents a unique string y
+        # the set of derivations that yield y is denoted Dy
+        
+        # raw counts: the array self.counts_ is used to compute the function
+        #   n(y) = \sum_d \gamma_y(d)
+        self.counts_ = np.array([Dy.count() for Dy in support], float)
         # normalising constant for counts (number of samples)
-        self.Zn_ = float(self.counts_.sum(0))
+        #   Zn = \sum_y n(y)
+        self.Zn_ = self.counts_.sum(0)
+        ####print >> sys.stderr, 'n(y)=', self.counts_
 
-        # up(y) = \sum_{d \in D_y} ur(d) * n(d)
-        self.uYR = np.array([sum(d.importance * d.count for d in Dy) for Dy in support])
+        # normalisation suggested in Murphy (2012)
+        # seems a bit silly as it ends up dominated by q(d)
+        ###self.unnorm_log_r_ = np.array([reduce(np.logaddexp, (d.log_importance for d in Dy)) for Dy in support], float)
+        ###self.log_Zr_ = reduce(np.logaddexp, self.unnorm_log_r_)
+        ###self.r_ = np.exp(self.unnorm_log_r_ - self.log_Zr_)
+        ###print >> sys.stderr, 'R=', self.r_
+        
+        # normalised q(y) = n(y) / Zn
+        self.Qy_ = self.counts_ / self.Zn_
+        ###print >> sys.stderr, 'q(y)=', self.Qy_
+        
+        # unnormalised p(y)
+        #   Zp * p(y) = \sum_d \gamma_y(d) * importance(d)
+        # where importance(d) is the unnormalised importance weight of d, that is, (Zp*p(d))/(Zq*q(d))
+        self.unnorm_p_ = np.array([np.sum(d.importance * d.count for d in Dy) for Dy in support], float)
+        #HACK self.unnorm_p_ = np.array([self.r_[i] for i, Dy in enumerate(support)], float)
+        ###print >> sys.stderr, 'unp(y)=', self.unnorm_p_
+        # p's normalising constant
+        self.Zp_ = self.unnorm_p_.sum(0)
+        
+        # p(y) = unnorm_p(y) / Zp
+        self.Py_ = self.unnorm_p_ / self.Zp_
+        ###print >> sys.stderr, 'p(y)=', self.Py_
 
-        # Z_p = \sum_y up(y)
-        # normalising constant for importance weights
-        self.Zp_ = self.uYR.sum(0)
 
-        # p(y) = \frac{up(y)}{Z_p}
-        self.Py = self.uYR/self.Zp_
+        # unnormalised expected f(y) -- feature vector wrt the target distribution p
+        #   Z <f_y> = \sum_{d \in Dy} gamma_y(d) f(d) ur(d) n(d)
+        self.unnorm_f_ = np.array([reduce(sum, (d.vector.as_array(p_features) * d.importance * d.count for d in Dy)) for Dy in support], float)
+        # normalised expected f(y)
+        #   <f(y)> = unnorm_f(y)/unnorm_p(y)
+        self.Fy_ = np.array([self.unnorm_f_[i]/self.unnorm_p_[i] for i, Dy in enumerate(support)])
+        # expected feature vector <f(d)>
+        self.uf_ = self.unnorm_f_.sum(0) / self.Zp_
 
-        # expected feature vector (F) given yield(d) = y
-        # Z <f_y> = \sum_{d \in Dy} gamma_y(d) f(d) ur(d) n(d)
-        self.uYFR = np.array([reduce(sum, (d.vector.as_array(p_features) * d.ur * d.n for d in Dy)) for Dy in support])
-        # <f_y>
-        self.uFy_ = np.array([self.uYFR[i]/self.uYR[i] for i, Dy in enumerate(support)])
+        # unnoralised expected g(y) -- feature vector wrt the instrumental distribution q
+        #   Z <g_y> = \sum_{d \in Dy} gamma_y(d) g(d) ur(d) n(d)
+        self.unnorm_g_ = np.array([reduce(sum, (d.vector.as_array(q_features) * d.importance * d.count for d in Dy)) for Dy in support], float)
+        # normalised expected g(y)
+        self.Gy_ = np.array([self.unnorm_g_[i]/self.unnorm_p_[i] for i, Dy in enumerate(support)])
+    #def qq(self, i, normalise=True):
+    #    return self.unnormalised_q_[i] if not normalise else self.normalised_q_[i]
 
-        # expected feature vector (F)
-        # Z <f> = \sum_y <f_y>
-        self.uFR = self.uYFR.sum(0)
-        # <f>
-        self.uf_ = self.uFR / self.Zp_
-
-        # expected feature vector (G) given yield(d) = y
-        # Z <g_y> = \sum_{d \in Dy} gamma_y(d) g(d) ur(d) n(d)
-        self.uYGR = np.array([reduce(sum, (d.vector.as_array(q_features) * d.ur * d.n for d in Dy)) for Dy in support])
-        # <g_y>
-        self.uGy_ = np.array([self.uYGR[i]/self.uYR[i] for i, Dy in enumerate(support)])
-
-        # expected feature vector (G)
-        # Z <g> = \sum_y <g_y>
-        self.uGR = self.uYGR.sum(0)
-        # <g>
-        self.ug_ = self.uGR / self.Zp_
+        # expected feature vector <g(d)>
+        self.ug_ = self.unnorm_g_.sum(0) / self.Zp_
 
     def __iter__(self):
         return iter(self.support_)
@@ -101,24 +119,24 @@ class EmpiricalDistribution(object):
 
     def q(self, i, normalise=True):
         """a synonym for n(i)"""
-        return self.counts_[i] if not normalise else self.counts_[i]/self.Zn_
+        return self.Qy_[i] if normalise else self.counts_[i]
 
     def p(self, i, normalise=True):
         """
         Posterior of the i-th derivation group (0-based).
         That is, p(y) where support[i] = Dy = {d \in D: yield(d) = y}."""
-        return self.uYR[i] if not normalise else self.Py[i]
+        return self.Py_[i] if normalise else self.unnorm_p_[i]
 
     def f(self, i):
         """f(y) where groups[i] = Dy"""
-        return self.uFy_[i]  # self.uYFR[i]/self.uYR[i]
+        return self.Fy_[i] 
 
     def g(self, i=None):
         """g(y) where groups[i] = Dy"""
-        return self.uGy_[i]  # self.uYGR[i]/self.uYR[i]
+        return self.Gy_[i] 
 
     def copy_posterior(self, normalise=True):
-        return self.uYR.copy() if not normalise else self.Py
+        return self.Py_.copy() if normalise else self.unnorm_p_
 
     def uf(self):
         """Expected feature vector <ff>"""

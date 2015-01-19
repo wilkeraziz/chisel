@@ -7,7 +7,7 @@ __author__ = 'waziz'
 import re
 import itertools
 from collections import defaultdict
-from semiring import CountSemiring
+from semiring import CountSemiring, ProbabilitySemiring
 import numpy as np
 from util import npvec2str, kv2str
 
@@ -74,6 +74,29 @@ class SVector(object):
 
     def __str__(self):
         return ' '.join(('%s=%s' % (k, str(v[0]))) if len(v) == 1 else ('%s=(%s)' % (k, ' '.join(str(x) for x in v))) for k, v in self.iteritems())
+
+
+class Yield(object):
+
+    def __init__(self, str_yield):
+        self.yield_ = str_yield
+        self.tokens_ = tuple(str_yield.split())
+
+    def __str__(self):
+        return self.yield_
+
+    def len(self):
+        return len(self.tokens_)
+
+    def __iter__(self):
+        return iter(self.tokens_)
+
+    def __getitem__(self, i):
+        return self.tokens_[i]
+
+    @property
+    def leaves(self):
+        return self.tokens_
 
 
 class Tree(object):
@@ -151,12 +174,12 @@ class Derivation(object):
     A weighted derivation sampled a number of times
     """
 
-    def __init__(self, tree, vector, score, count, importance=1.0):
+    def __init__(self, tree, vector, count, log_importance=0.0):
         self.tree_ = tree
         self.vector_ = vector
-        self.score_ = score
         self.count_ = count
-        self.importance_ = importance
+        self.log_importance_ = log_importance
+        self.importance_ = np.exp(log_importance)
 
     @property
     def tree(self):
@@ -167,10 +190,6 @@ class Derivation(object):
         return self.vector_
 
     @property
-    def score(self):
-        return self.score_
-
-    @property
     def count(self):
         return self.count_
 
@@ -179,11 +198,11 @@ class Derivation(object):
         return self.count_
 
     @property
-    def importance(self):
-        return self.importance_
+    def log_importance(self):
+        return self.log_importance_
 
     @property
-    def ur(self):
+    def importance(self):
         return self.importance_
 
     def __hash__(self):
@@ -196,7 +215,7 @@ class Derivation(object):
         return not (self == other)
 
     def __str__(self):
-        return '%s\t%s\t%s\t%s\t%s' % (self.count_, self.importance_, self.score_, self.tree_, self.vector_)
+        return '%s\t%s\t%s\t%s\t%s' % (self.count_, self.log_importance_, self.tree_, self.vector_)
 
 
 class DerivationGroup(object):
@@ -241,7 +260,7 @@ class DerivationGroup(object):
         @return total count according to op
         """
         return reduce(op, (d.count for d in self.derivations_))
-
+    
 
 def groupby(derivations, key):
     """group derivations by key (a function over derivations)"""

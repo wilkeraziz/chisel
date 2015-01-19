@@ -7,6 +7,7 @@ import sys
 import argparse
 import math
 import os
+from time import time
 from multiprocessing import Pool
 from functools import partial
 from ConfigParser import RawConfigParser
@@ -19,19 +20,20 @@ import traceback
 
 
 class ImportanceSample(object):
-    def __init__(self, sample_str, count, fpairs, target_score, log_r):
+
+    def __init__(self, sample_str, count, fpairs, log_p, log_q):
         """
         :param sample_str: actual sample
         :param count: number of times it was sampled
         :param fpairs: pairs (fname, fvalue)
-        :param target_score: ln(up(d)), where up is the unnormalised target distribution
-        :param log_r: ln(up(d)) - ln(uq(d)), where uq is the unnormalised instrumental distribution
+        :param log_p: target score 
+        :param log_q: proxy score
         """
         self.sample_str_ = sample_str
         self.count_ = count
         self.fpairs_ = fpairs
-        self.target_score_ = target_score
-        self.log_r_ = log_r
+        self.log_p_ = log_p
+        self.log_q_ = log_q
 
     @property
     def sample_str(self):
@@ -46,19 +48,19 @@ class ImportanceSample(object):
         return self.fpairs_
 
     @property
-    def p(self):
+    def log_p(self):
         """returns ln(up(d))"""
-        return self.target_score_
+        return self.log_p_
 
     @property
-    def q(self):
+    def log_q(self):
         """returns ln(uq(d))"""
-        return self.target_score_ - self.log_r_
+        return self.log_q_
 
     @property
-    def r(self):
+    def log_r(self):
         """returns ln(up(d)) - ln(uq(d))"""
-        return self.log_r_
+        return self.log_p_ - self.log_q_
 
     def __str__(self):
         return self.format_str()
@@ -66,7 +68,7 @@ class ImportanceSample(object):
     def format_str(self, keys='n r p q s v'.split(), separator='\t'):
         """
         Format as string
-        :param keys: n (count), r (log importance weight), p (p dot), q (q dot), s (string), d (derivation), v (vector)
+        :param keys: n (count), r (log unnormalised importance weight), p (log unnormalised p), q (log unnormalised q), s (string), d (derivation), v (vector)
         :param separator:
         :return:
         """
@@ -75,11 +77,11 @@ class ImportanceSample(object):
             if k == 'n':
                 x = self.count
             elif k == 'r':
-                x = self.r
+                x = self.log_r
             elif k == 'p':
-                x = self.p
+                x = self.log_p
             elif k == 'q':
-                x = self.q
+                x = self.log_q
             elif k == 's' or k == 'd':  # TODO: return derivation
                 x = self.sample_str
             elif k == 'v':
@@ -118,13 +120,13 @@ class Result(object):
         if opt == 'n':
             return sorted(self.samples_, key=lambda s: s.count, reverse=True)
         if opt == 'p':
-            return sorted(self.samples_, key=lambda s: s.p, reverse=True)
+            return sorted(self.samples_, key=lambda s: s.log_p, reverse=True)
         if opt == 'q':
-            return sorted(self.samples_, key=lambda s: s.q, reverse=True)
+            return sorted(self.samples_, key=lambda s: s.log_q, reverse=True)
         if opt == 'r':
-            return sorted(self.samples_, key=lambda s: s.r, reverse=True)
+            return sorted(self.samples_, key=lambda s: s.log_r, reverse=True)
         if opt == 'nr':
-            return sorted(self.samples_, key=lambda s: s.count * math.exp(s.r), reverse=True)
+            return sorted(self.samples_, key=lambda s: s.count * math.exp(s.log_r), reverse=True)
 
         return iter(self.samples_)
 
@@ -146,7 +148,7 @@ def sample(segment, n_samples, proxy_weights, target_weights, cdec_config_str=''
     # pre-process the input (some scorers might require analysis of the input segment)
     ff.preprocess_input(segment)
     # builds the proxy distribution
-    forest = cdeclib.build_proxy(segment.src, segment.grammar, decoder)
+    forest = cdeclib.build_proxy(str(segment.src), segment.grammar, decoder)
     # samples from the proxy distribution
     q_samples = cdeclib.sample(forest, n_samples)
     # header = '\t'.join(['#count', '#translation', '#r', '#qmap', '#qdot', '#pmap', '#pdot'])
@@ -157,7 +159,7 @@ def sample(segment, n_samples, proxy_weights, target_weights, cdec_config_str=''
     for sample_str, sample_info in sorted(q_samples.iteritems(), key=lambda pair: len(pair[1]), reverse=True):
         # print >> sys.stderr, len(sample_info), sample_str
         # computes additional features
-        extraff = ff.compute_features(ff.Hypothesis(source=segment.src, translation=sample_str))
+        extraff = ff.compute_features(ff.Hypothesis(source=str(segment.src), translation=sample_str))
         # groups vectors associated with equivalent derivations
         counter = collections.Counter(frozenset(fmap.iteritems()) for fmap, _ in sample_info)
         # compute target vectors
@@ -173,11 +175,11 @@ def sample(segment, n_samples, proxy_weights, target_weights, cdec_config_str=''
             # proxy score
             qdot = fmap_dot(fmap, proxy_weights)
             # make output
-            is_samples.append(ImportanceSample(sample_str,
-                                               count,
-                                               fmap.items(),
-                                               pdot,
-                                               pdot - qdot))
+            is_samples.append(ImportanceSample(sample_str=sample_str,
+                                               count=count,
+                                               fpairs=fmap.items(),
+                                               log_p=pdot,
+                                               log_q=qdot))
     # resets scorers to a null state
     ff.reset_scorers()
     return Result(segment, is_samples)

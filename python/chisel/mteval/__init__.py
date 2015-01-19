@@ -170,6 +170,10 @@ def loss(c, r, metric):
     return _OBJECTS_[metric].loss(c, r)
 
 
+def training_loss(c, metric):
+    return _OBJECTS_[metric].training_loss(c)
+
+
 def coloss(c, metric):
     return _OBJECTS_[metric].coloss(c)
 

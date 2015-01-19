@@ -3,7 +3,7 @@ __author__ = 'waziz'
 import re
 from os.path import isfile, basename
 import logging
-from chisel.smt import Derivation, Tree, SVector
+from chisel.smt import Yield, Derivation, Tree, SVector
 import math
 from glob import glob
 
@@ -73,14 +73,14 @@ class SegmentMetaData(object):
     def __str__(self):
         return 'grammar=%s\tsrc=%s' % (self.grammar_, self.src_)
 
-    def to_sgm(self):
-        if self.refs_:
-            return '<seg grammar="{0}" id="{1}">{2}</seg> ||| {3}'.format(self.sid_,
+    def to_sgm(self, dump_refs=True):
+        if dump_refs and self.refs_:
+            return '<seg grammar="{1}" id="{0}">{2}</seg> ||| {3}'.format(self.sid_,
                                                                           self.grammar_,
                                                                           self.src_,
-                                                                          ' ||| '.join(self.refs_))
+                                                                          ' ||| '.join(str(ref) for ref in self.refs_))
         else:
-            return '<seg grammar="{0}" id="{1}">{2}</seg>'.format(self.sid_,
+            return '<seg grammar="{1}" id="{0}">{2}</seg>'.format(self.sid_,
                                                                   self.grammar_,
                                                                   self.src_)
 
@@ -119,17 +119,17 @@ def parse_cdec_sgml(sgml_str):
     groups = match.groups()
     return {'grammar': groups[0],
             'sid': groups[1],
-            'src': groups[2],
-            'refs': [ref.strip() for ref in parts[1:]]}
+            'src': Yield(groups[2]),
+            'refs': [Yield(ref.strip()) for ref in parts[1:]]}
 
 
 def parse_plain(plain_str):
     fields = plain_str.split(' ||| ')
     if len(fields) == 0:
         raise Exception('Missing fields: %s' % plain_str)
-    args = {'src': fields[0]}
+    args = {'src': Yield(fields[0])}
     if len(fields) > 1:
-        args = {'refs': fields[1:]}
+        args = {'refs': Yield(fields[1:])}
     return args
 
 
@@ -176,7 +176,7 @@ def read_sampled_derivations(iterable, required=dict(
     The table must be grouped by derivation.
     @return list of solutions
     """
-    logging.info('reading from %s', iterable)
+    # logging.debug('reading from %s', iterable)
     # get the column names
     raw = next(iterable)
     if not raw.startswith('#'):
@@ -186,16 +186,17 @@ def read_sampled_derivations(iterable, required=dict(
     # sanity check
     if not (needed <= frozenset(colnames)):
         raise Exception('missing columns: %s' % ', '.join(needed - frozenset(colnames)))
-    logging.info('%d columns: %s', len(colnames), colnames)
+    # logging.debug('%d columns: %s', len(colnames), colnames)
     # parse rows
     D = []
     for row in (raw.strip().split('\t') for raw in iterable):
         k2v = {key: value for key, value in zip(colnames, row)}
         d = Derivation(tree=Tree(k2v[required['derivation']]),
                        vector=SVector(k2v[required['vector']]),
-                       score=float(k2v[required['score']]),
                        count=int(k2v[required['count']]),
-                       importance=math.exp(float(k2v[required['importance']])))
+                       log_importance=float(k2v[required['importance']]))
         D.append(d)
-    logging.info('%d rows', len(D))
     return D
+
+def sampled_derivations_from_file(input_file, headers):
+    return read_sampled_derivations(iter(read_block(open(input_file))), headers)
