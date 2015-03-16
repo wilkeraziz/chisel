@@ -1,92 +1,121 @@
 __author__ = 'waziz'
 
 from chisel.smt import Solution
-from chisel.util import npvec2str
+from chisel.util import npvec2str, fmap_dot
 import numpy as np
 import sys
-
+from chisel.smt import groupby
+from chisel.util import obj2id
+from collections import defaultdict
 
 class EmpiricalDistribution(object):
     """
     """
 
-    def __init__(self, support, p_features, q_features):
+    def __init__(self, 
+            derivations, 
+            q_wmap,  # q_features
+            p_wmap,  # p_features
+            get_yield,
+            empirical_q=True
+            ):
         """
         :param support: list of DerivationGroup objects, each of which represents derivations sharing the same yield (Dy)
         :param p_features: list of features of the target
         :param q_features: list of features of the proxy
+        :param get_yield: a function that returns the yield of a derivation
         """
+        
+        # 0) organise the support
+
+        # group derivations by yield
+        support = groupby(derivations, key=get_yield)
+        # assign sequential ids to yields
+        y2i = defaultdict()
+        [obj2id(Dy.projection, y2i) for Dy in support]
+        # support of derivations
+        D = np.arange(len(derivations))
+        # support of strings
+        Y = np.arange(len(y2i))
+        # map derivation id to yield id
+        d2y = np.array([y2i[get_yield(d)] for d in derivations], int)
+        # matrix which reproduces the indicator function \gamma_y(d)
+        gamma = np.zeros((len(D), len(Y)), int)
+        for i, y in enumerate(d2y):
+            gamma[i,y] = 1
+        # helper function which selects statistics (from a given array) associated with derivations for which gamma_y(d) == 1 for a given y
+        select = lambda array, y: array[gamma[:,y].nonzero()[0]]
+
+        # 1) dot products
+        q_dot = np.array([fmap_dot(d.vector, q_wmap) for d in derivations])
+        p_dot = np.array([fmap_dot(d.vector, p_wmap) for d in derivations])
+        r_dot = p_dot - q_dot
+
+        # 2) counts: n(d) and n(y) 
+        nd = np.array([d.count for d in derivations], float)
+        ny = np.array([select(nd, y).sum() for y in Y])
+
+        # 3) instrumental probability: q(d) and q(y)
+        if empirical_q:
+            Zn = nd.sum()
+            qd = nd / Zn  # simply, the empirical distribution
+            log_qd = np.log(qd)
+            qy = ny / Zn
+        else:
+            log_uqd = np.log(nd) + q_dot
+            log_qd = log_uqd - np.logaddexp.reduce(log_uqd)
+            qd = np.exp(log_qd)
+            qy = np.array([select(qd, y).sum() for y in Y])
+       
+        # 4) importance weight: r(d) = ur(d)/Zr
+        log_urd = np.log(nd) + r_dot
+        log_rd = log_urd - np.logaddexp.reduce(log_urd)
+        rd = np.exp(log_rd)
+
+        # 5) p(y) 
+        # where log up(y) = \sum_{d in Dy} log ur(d)
+        log_upy = np.array([np.logaddexp.reduce(select(log_urd, y)) for y in Y])
+        log_py = log_upy - np.logaddexp.reduce(log_upy)
+        py = np.exp(log_py)
+
+        # 6) r_y(d) = ur(d)/sum_Dy ur(d)
+        log_rd_y = [log_urd[d] - log_upy[d2y[d]] for d in D] 
+        rd_y = np.exp(log_rd_y)
+       
+        # 7) expected feature vectors 
+        fd = np.array([d.vector.as_array(p_wmap.features) for d in derivations])
+        fdpd = (fd.transpose() * rd).transpose()
+        fdpd_y = (fd.transpose() * rd_y).transpose() 
+        # <f(d)>_p
+        p_expected_f = fdpd.sum(0)
+        # <\gamma_y(d) f(d)>_p
+        p_expected_f_y = np.array([select(fdpd_y, y).sum(0) for y in Y])
+        dpdt = ((p_expected_f_y - p_expected_f).transpose() * py).transpose()
+        
+        gd = np.array([d.vector.as_array(q_wmap.features) for d in derivations])
+        gdqd = (gd.transpose() * qd).transpose()
+        # <g(d)>_q
+        q_expected_g = gdqd.sum(0)
+        
+        # 8) KL(q||up) where up(d) = exp(theta f(d)) = exp(p_dot(d))
+        #       = \sum_d q(d) log (q(d)/up(d))
+        #       = \sum_d q(d) (log q(d) - log up(d))
+        #       = \sum_d q(d) (log q(d) - p_dot(d))
+        KL = (qd * (log_qd - log_rd)).sum()
+        # dKL/dlambda = \sum_d q(d)(g(d) - <g(d)>_q)(log q(d) - log up(d) + 1)
+        dKLdl = (((gd - q_expected_g).transpose() * qd) * (log_qd - log_rd + 1)).transpose().sum(0)
+
+        # 9) store data
         self.support_ = support
-        self.q_features_ = q_features
-        self.p_features_ = p_features
+        self.p_wmap_ = p_wmap
+        self.q_wmap_ = q_wmap
+        self.ny_ = ny
+        self.qy_ = qy
+        self.py_ = py
+        self.dpdt_ = dpdt
+        self.kl_ = KL
+        self.dkldl_ = dKLdl
 
-        # each group D_y constains derivations d such that their projections are y
-        # the posterior of y is given by
-        #  p(y) = \frac{ \expec{gamma_y(d) ur(d)}{q} }{ \expec{ur(d)}{q} }
-        # where gamma_y(d) = 1 if yield(d)=y, 0 otherwise
-        #  ur(d) = up(d)/uq(d)
-        #  and the expectations are taken wrt q(d)
-        #
-        # we can estimate the unnormalised posterior of y using the empirical average
-        #  up(y) = \sum_{d \in D_y} ur(d) * n(d)
-        # where n(d) is the number of times d was sampled
-        # the normalised posterior is p(y) = up(y) / \sum_y up(y)
-
-        # From here, each position in a vector represents a unique string y
-        # the set of derivations that yield y is denoted Dy
-        
-        # raw counts: the array self.counts_ is used to compute the function
-        #   n(y) = \sum_d \gamma_y(d)
-        self.counts_ = np.array([Dy.count() for Dy in support], float)
-        # normalising constant for counts (number of samples)
-        #   Zn = \sum_y n(y)
-        self.Zn_ = self.counts_.sum(0)
-        ####print >> sys.stderr, 'n(y)=', self.counts_
-
-        # normalisation suggested in Murphy (2012)
-        # seems a bit silly as it ends up dominated by q(d)
-        ###self.unnorm_log_r_ = np.array([reduce(np.logaddexp, (d.log_importance for d in Dy)) for Dy in support], float)
-        ###self.log_Zr_ = reduce(np.logaddexp, self.unnorm_log_r_)
-        ###self.r_ = np.exp(self.unnorm_log_r_ - self.log_Zr_)
-        ###print >> sys.stderr, 'R=', self.r_
-        
-        # normalised q(y) = n(y) / Zn
-        self.Qy_ = self.counts_ / self.Zn_
-        ###print >> sys.stderr, 'q(y)=', self.Qy_
-        
-        # unnormalised p(y)
-        #   Zp * p(y) = \sum_d \gamma_y(d) * importance(d)
-        # where importance(d) is the unnormalised importance weight of d, that is, (Zp*p(d))/(Zq*q(d))
-        self.unnorm_p_ = np.array([np.sum(d.importance * d.count for d in Dy) for Dy in support], float)
-        #HACK self.unnorm_p_ = np.array([self.r_[i] for i, Dy in enumerate(support)], float)
-        ###print >> sys.stderr, 'unp(y)=', self.unnorm_p_
-        # p's normalising constant
-        self.Zp_ = self.unnorm_p_.sum(0)
-        
-        # p(y) = unnorm_p(y) / Zp
-        self.Py_ = self.unnorm_p_ / self.Zp_
-        ###print >> sys.stderr, 'p(y)=', self.Py_
-
-
-        # unnormalised expected f(y) -- feature vector wrt the target distribution p
-        #   Z <f_y> = \sum_{d \in Dy} gamma_y(d) f(d) ur(d) n(d)
-        self.unnorm_f_ = np.array([reduce(sum, (d.vector.as_array(p_features) * d.importance * d.count for d in Dy)) for Dy in support], float)
-        # normalised expected f(y)
-        #   <f(y)> = unnorm_f(y)/unnorm_p(y)
-        self.Fy_ = np.array([self.unnorm_f_[i]/self.unnorm_p_[i] for i, Dy in enumerate(support)])
-        # expected feature vector <f(d)>
-        self.uf_ = self.unnorm_f_.sum(0) / self.Zp_
-
-        # unnoralised expected g(y) -- feature vector wrt the instrumental distribution q
-        #   Z <g_y> = \sum_{d \in Dy} gamma_y(d) g(d) ur(d) n(d)
-        self.unnorm_g_ = np.array([reduce(sum, (d.vector.as_array(q_features) * d.importance * d.count for d in Dy)) for Dy in support], float)
-        # normalised expected g(y)
-        self.Gy_ = np.array([self.unnorm_g_[i]/self.unnorm_p_[i] for i, Dy in enumerate(support)])
-    #def qq(self, i, normalise=True):
-    #    return self.unnormalised_q_[i] if not normalise else self.normalised_q_[i]
-
-        # expected feature vector <g(d)>
-        self.ug_ = self.unnorm_g_.sum(0) / self.Zp_
 
     def __iter__(self):
         return iter(self.support_)
@@ -102,71 +131,49 @@ class EmpiricalDistribution(object):
         return self.support_
 
     @property
-    def p_features(self):
-        return self.p_features_
+    def p_wmap(self):
+        return self.p_wmap_
 
     @property
-    def q_features(self):
-        return self.q_features_
+    def q_wmap(self):
+        return self.q_wmap_
 
-    def n(self, i, normalise=False):
+    def n(self, i):
         """
         Absolute counts of the i-the derivation group (0-based).
         Note that in the case of importance sampling, this is only meaningful wrt the instrumental distribution,
         in which case the normalised version represents the posterior q(y).
         """
-        return self.counts_[i] if not normalise else self.counts_[i]/self.Zn_
+        return self.ny_[i]
 
-    def q(self, i, normalise=True):
+    def q(self, i):
         """a synonym for n(i)"""
-        return self.Qy_[i] if normalise else self.counts_[i]
+        return self.qy_[i]
 
-    def p(self, i, normalise=True):
+    def p(self, i):
         """
         Posterior of the i-th derivation group (0-based).
         That is, p(y) where support[i] = Dy = {d \in D: yield(d) = y}."""
-        return self.Py_[i] if normalise else self.unnorm_p_[i]
+        return self.py_[i]
 
-    def f(self, i):
-        """f(y) where groups[i] = Dy"""
-        return self.Fy_[i] 
+    def copy_posterior(self):
+        return self.py_.copy()
 
-    def g(self, i=None):
-        """g(y) where groups[i] = Dy"""
-        return self.Gy_[i] 
+    def copy_dpdt(self):
+        return self.dpdt_.copy()
 
-    def copy_posterior(self, normalise=True):
-        return self.Py_.copy() if normalise else self.unnorm_p_
-
-    def uf(self):
-        """Expected feature vector <ff>"""
-        return self.uf_
-
-    def ug(self):
-        """Expected feature vector <gg>"""
-        return self.ug_
-
-    def dtheta(self, i):
-        """\derivative{p(y;theta)/q(y;lambda)}{theta} where groups[i] = Dy"""
-        return (self.f(i) - self.uf()) * self.p(i, True)
-
-    def dlambda(self, i):
-        """\derivative{p(y;theta)/q(y;lambda)}{lambda} where groups[i] = Dy"""
-        return (self.ug() - self.g(i)) * self.p(i, True)
+    def kl(self):
+        return self.kl_, self.dkldl_
 
     def __str__(self):
-        strs = []
+        strs = ['#p(y)\t#q(y)\t#y']
         for i, Dy in enumerate(self.support_):
-            strs.append('p={0}\tf={1}\tg={2}\tyield={3}'.format(self.p(i),
-                                                                npvec2str(self.f(i)),
-                                                                npvec2str(self.g(i)),
-                                                                Dy.projection))
+            strs.append('{0}\t{1}\t{2}'.format(self.p(i),
+                self.q(i),
+                Dy.projection))
         return '\n'.join(strs)
 
     def solution(self, i):
         return Solution(Dy=self.support_[i],
-                        f=self.f(i),
-                        g=self.g(i),
-                        p=self.p(i, normalise=True),
-                        q=self.q(i, normalise=True),
-                        n=self.n(i, normalise=False))
+                        p=self.p(i),
+                        q=self.q(i))

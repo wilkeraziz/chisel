@@ -45,7 +45,7 @@ def MBR(empdist, metric, normalise=False):
     for h, hyp in enumerate(empdist):
         for r, ref in enumerate(empdist):
             score = mteval.loss(c=h, r=r, metric=metric)
-            scores[h] += score * empdist.p(r, normalise)
+            scores[h] += score * empdist.p(r)
     return scores
 
 def MBR_training(empdist, metric, normalise=False):
@@ -59,6 +59,6 @@ def MBR_training(empdist, metric, normalise=False):
     scores = np.array([0.0] * M)
     for h, hyp in enumerate(empdist):
         score = mteval.training_loss(c=h, metric=metric)
-        scores[h] += score * empdist.p(c, normalise)
+        scores[h] += score * empdist.p(c)
     return scores
 

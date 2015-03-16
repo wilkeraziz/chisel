@@ -13,31 +13,38 @@ from functools import partial
 from ConfigParser import RawConfigParser
 import ff
 import cdeclib
+import numpy as np
 from util import fpairs2str, dict2str, fmap_dot, scaled_fmap
+from util import resample as do_resample
 from util.config import configure, section_literal_eval
 from util.io import SegmentMetaData
 import traceback
+import itertools
+from smt import SVector, Tree, Derivation
 
 
-class ImportanceSample(object):
+class RawImportanceSample(object):
+    """
+    This is a container for the minimum necessary information about a sample
+    """
 
-    def __init__(self, sample_str, count, fpairs, log_p, log_q):
+    def __init__(self, derivation_str, count, fpairs, log_up, log_uq):
         """
-        :param sample_str: actual sample
+        :param derivation_str: actual sample
         :param count: number of times it was sampled
         :param fpairs: pairs (fname, fvalue)
-        :param log_p: target score 
-        :param log_q: proxy score
+        :param log_up: target score (log of unnormalised target distribution)
+        :param log_uq: proxy score (log of unnormalised instrumental distribution)
         """
-        self.sample_str_ = sample_str
+        self.derivation_str_ = derivation_str
         self.count_ = count
         self.fpairs_ = fpairs
-        self.log_p_ = log_p
-        self.log_q_ = log_q
+        self.log_up_ = log_up
+        self.log_uq_ = log_uq
 
     @property
-    def sample_str(self):
-        return self.sample_str_
+    def derivation_str(self):
+        return self.derivation_str_
 
     @property
     def count(self):
@@ -48,42 +55,104 @@ class ImportanceSample(object):
         return self.fpairs_
 
     @property
-    def log_p(self):
+    def log_up(self):
         """returns ln(up(d))"""
-        return self.log_p_
+        return self.log_up_
 
     @property
-    def log_q(self):
+    def log_uq(self):
         """returns ln(uq(d))"""
-        return self.log_q_
+        return self.log_uq_
 
     @property
-    def log_r(self):
+    def log_ur(self):
         """returns ln(up(d)) - ln(uq(d))"""
-        return self.log_p_ - self.log_q_
+        return self.log_up_ - self.log_uq_
+
+
+class ImportanceSample(object):
+    """
+    This is a container for a sampled derivation
+    along with basic estimates.
+    """
+
+    def __init__(self, derivation_str, count, log_up, log_uq, log_ur, importance, fpairs):
+        """
+        :param derivation_str: actual sample
+        :param count: number of times it was sampled
+        :param log_up: log of unnormalised p 
+        :param log_uq: log of unnormalised q
+        :param log_ur: log of unnormalised r
+        :param importance: normalised importance (this is an estimate)
+        :param fpairs: pairs (fname, fvalue)
+        """
+        self.derivation_str_ = derivation_str
+        self.count_ = count
+        self.log_up_ = log_up
+        self.log_uq_ = log_uq
+        self.log_ur_ = log_ur
+        self.importance_ = importance
+        self.fpairs_ = fpairs
+
+    @property
+    def derivation_str(self):
+        return self.derivation_str_
+
+    @property
+    def projection(self):
+        return self.derivation_str_
+
+    @property
+    def fpairs(self):
+        return self.fpairs_
+
+    @property
+    def count(self):
+        return self.count_
+    
+    @property
+    def log_up(self):
+        """(exact) log up(d)"""
+        return self.log_up_
+
+    @property
+    def log_uq(self):
+        """(exact) ln uq(d)"""
+        return self.log_uq_
+
+    @property
+    def log_ur(self):
+        """(exact) log ur(d)"""
+        return self.log_ur_
+
+    @property
+    def importance(self):
+        return self.importance_
 
     def __str__(self):
         return self.format_str()
 
-    def format_str(self, keys='n r p q s v'.split(), separator='\t'):
+    def format_str(self, keys='n importance log_up log_uq log_ur s v'.split(), separator='\t'):
         """
         Format as string
-        :param keys: n (count), r (log unnormalised importance weight), p (log unnormalised p), q (log unnormalised q), s (string), d (derivation), v (vector)
+        :param keys: 
         :param separator:
         :return:
         """
         fields = [None] * len(keys)
         for i, k in enumerate(keys):
-            if k == 'n':
+            if k == 'n' or k == 'count':
                 x = self.count
-            elif k == 'r':
-                x = self.log_r
-            elif k == 'p':
-                x = self.log_p
-            elif k == 'q':
-                x = self.log_q
+            elif k == 'log_up':
+                x = self.log_up
+            elif k == 'log_uq':
+                x = self.log_uq
+            elif k == 'log_ur':
+                x = self.log_ur
+            elif k == 'importance':
+                x = self.importance
             elif k == 's' or k == 'd':  # TODO: return derivation
-                x = self.sample_str
+                x = self.derivation_str
             elif k == 'v':
                 x = fpairs2str(self.fpairs)
             else:
@@ -93,14 +162,54 @@ class ImportanceSample(object):
 
 
 class Result(object):
-    def __init__(self, segment, samples):
+
+    def __init__(self, segment, raw_samples, q_active_features, resample=True):
         """
         A result associated a segment with its importance samples
         :param segment: the input segment
         :param samples: a list of ImportanceSample objects
+        :param resample: if True resamples the importance (helps lower variance)
         """
         self.segment_ = segment
-        self.samples_ = samples
+        self.q_active_features_ = frozenset(q_active_features)
+
+        # get total samples
+        n_samples = sum(raw.count for raw in raw_samples)
+
+        # estimate (normalised) q(d)
+        log_uq = np.array([raw.log_uq + np.log(raw.count) for raw in raw_samples], float)
+        log_Zq = np.logaddexp.reduce(log_uq)
+        #log_q = log_uq - log_Zq
+        #log_q2 = np.log(np.array([raw.count for raw in raw_samples], float) / n_samples)
+
+        # estimate (normalised) importance weights
+        log_ur = np.array([raw.log_ur + np.log(raw.count) for raw in raw_samples], float)
+        log_Zr = np.logaddexp.reduce(log_ur)
+        log_r = log_ur - log_Zr
+        importance = np.exp(log_r)
+
+        if resample:  # importance resampling
+            importance = do_resample(np.exp(log_r), n_samples)
+
+        self.n_samples_ = n_samples
+        self.nonzero_ = np.array([raw_samples[i].count for i in np.nonzero(importance)[0]], float).sum() / n_samples
+        self.Zratio_ = log_Zr - np.log(n_samples)
+        logging.debug('%d samples (nonzero=%f) Zp/Zq=%f', self.n_samples_, self.nonzero_, self.Zratio_)
+
+        self.samples_ = [ImportanceSample(derivation_str=raw.derivation_str,
+            count=raw.count,
+            log_up=raw.log_up,
+            log_uq=raw.log_uq,
+            log_ur=raw.log_ur,
+            importance=importance[i],
+            fpairs=raw.fpairs) for i, raw in enumerate(raw_samples)]
+       
+        # TODO: delete list of ImportanceSamples and use instead Derivations
+        self.derivations_ = [Derivation(tree=Tree(raw.derivation_str),
+            vector=SVector(fpairs=raw.fpairs),
+            count=raw.count,
+            log_ur=raw.log_ur,
+            importance=importance[i]) for i, raw in enumerate(raw_samples)]
 
     @property
     def segment(self):
@@ -110,28 +219,41 @@ class Result(object):
     def samples(self):
         return self.samples_
 
+    @property
+    def n_samples(self):
+        return self.n_samples_
+
+    @property
+    def q_active_features(self):
+        return self.q_active_features_
+
+    @property
+    def Zratio(self):
+        return self.Zratio_
+
+    @property
+    def nonzero(self):
+        return self.nonzero_
+
     def n_derivations(self):
         return len(self.samples_)
 
     def n_strings(self):
-        return len(frozenset(sample.sample_str for sample in self.samples_))
+        return len(frozenset(sample.derivation_str for sample in self.samples_))
 
     def sorted(self, opt):
         if opt == 'n':
             return sorted(self.samples_, key=lambda s: s.count, reverse=True)
         if opt == 'p':
-            return sorted(self.samples_, key=lambda s: s.log_p, reverse=True)
+            return sorted(self.samples_, key=lambda s: s.log_up, reverse=True)
         if opt == 'q':
-            return sorted(self.samples_, key=lambda s: s.log_q, reverse=True)
+            return sorted(self.samples_, key=lambda s: s.log_uq, reverse=True)
         if opt == 'r':
-            return sorted(self.samples_, key=lambda s: s.log_r, reverse=True)
-        if opt == 'nr':
-            return sorted(self.samples_, key=lambda s: s.count * math.exp(s.log_r), reverse=True)
-
+            return sorted(self.samples_, key=lambda s: s.importance, reverse=True)
         return iter(self.samples_)
 
 
-def sample(segment, n_samples, proxy_weights, target_weights, cdec_config_str='', decoder=None):
+def sample(segment, n_samples, resample, proxy_weights, target_weights, cdec_config_str='', decoder=None):
     """
     Sample translation derivations for a given segment.
     :param segment: segment to be translated
@@ -155,13 +277,12 @@ def sample(segment, n_samples, proxy_weights, target_weights, cdec_config_str=''
     # print header
     # for now we do not have access to alignment
     # ostream = [header]
-    is_samples = []
-    for sample_str, sample_info in sorted(q_samples.iteritems(), key=lambda pair: len(pair[1]), reverse=True):
-        # print >> sys.stderr, len(sample_info), sample_str
+    raw_samples = []
+    for derivation_str, sample_info in sorted(q_samples.iteritems(), key=lambda pair: len(pair[1]), reverse=True):
         # computes additional features
-        extraff = ff.compute_features(ff.Hypothesis(source=str(segment.src), translation=sample_str))
+        extraff = ff.compute_features(ff.Hypothesis(source=str(segment.src), translation=derivation_str))
         # groups vectors associated with equivalent derivations
-        counter = collections.Counter(frozenset(fmap.iteritems()) for fmap, _ in sample_info)
+        counter = collections.Counter(fpairs for fpairs, _ in sample_info)
         # compute target vectors
         # qdots, pdots = [], []
         for q_fpairs, count in counter.iteritems():
@@ -171,21 +292,40 @@ def sample(segment, n_samples, proxy_weights, target_weights, cdec_config_str=''
             for fname, fvalue in extraff:
                 fmap[fname] = fvalue
             # target score (the dot might skip some features, it depends on target_weights)
-            pdot = fmap_dot(fmap, target_weights)
-            # proxy score
-            qdot = fmap_dot(fmap, proxy_weights)
+            log_up = fmap_dot(fmap, target_weights)
+            # instrumental score
+            log_uq = fmap_dot(fmap, proxy_weights)
             # make output
-            is_samples.append(ImportanceSample(sample_str=sample_str,
+            raw_samples.append(RawImportanceSample(derivation_str=derivation_str,
                                                count=count,
                                                fpairs=fmap.items(),
-                                               log_p=pdot,
-                                               log_q=qdot))
+                                               log_up=log_up,
+                                               log_uq=log_uq))
+
+    # gather all features in forest
+    q_active_features = frozenset(itertools.chain(*((f for f, v in e.feature_values) for e in forest.edges)))
+
+    """unnorm_r = np.array([x.log_r + np.log(x.count) for x in is_samples], float)
+    total_r = np.logaddexp.reduce(unnorm_r)
+    norm_r = unnorm_r - total_r
+    importance = resample(np.exp(norm_r), n_samples)
+    log_importance = np.log(importance)
+    
+    unnorm_p = np.array([x.log_p for x in is_samples], float)
+    log_Zp = np.logaddexp.reduce(unnorm_p + log_importance)
+
+    unnorm_q = np.array([x.log_q + np.log(x.count) for x in is_samples], float)
+    total_q = np.logaddexp.reduce(unnorm_q)
+    print '     Zq', total_q - np.log(n_samples)
+    print '     Zp', log_Zp
+    print 'nonzero', np.array([is_samples[i].count for i in np.nonzero(importance)[0]], float).sum()/n_samples"""
+
     # resets scorers to a null state
     ff.reset_scorers()
-    return Result(segment, is_samples)
+    return Result(segment, raw_samples, q_active_features, resample=resample)
 
 
-def batch_sample(segments, n_samples, cdec_config_str, proxy_weights, target_weights):
+def batch_sample(segments, n_samples, resample, cdec_config_str, proxy_weights, target_weights):
     """
     As :func:`sample`, however processes a batch of segments
     :param segments: list/tuple of segments
@@ -197,7 +337,7 @@ def batch_sample(segments, n_samples, cdec_config_str, proxy_weights, target_wei
     # creates a decoder
     decoder = cdeclib.create_decoder(cdec_config_str, proxy_weights)
     # prepares output
-    return [sample(segment, n_samples, proxy_weights, target_weights, decoder) for segment in segments]
+    return [sample(segment, n_samples, resample, proxy_weights, target_weights, decoder) for segment in segments]
 
 
 def write_to_file(result, odir, columns, sortby):
@@ -215,7 +355,7 @@ def write_to_file(result, odir, columns, sortby):
             for s in result.sorted(sortby):
                 print >> out, s.format_str(columns)
             print >> out
-        return result.segment.id, result.n_derivations(), result.n_strings()
+        return result.segment.id, result.n_samples, result.n_derivations(), result.n_strings(), result.Zratio, result.nonzero
     except:
         raise Exception('job={0} exception={1}'.format(result.segment.id,
                                                        ''.join(traceback.format_exception(*sys.exc_info()))))
@@ -236,7 +376,13 @@ def write_to_stdout(result, columns, sortby):
 
 
 def sample_and_save(odir, columns, sortby, *args, **kwargs):
-    return write_to_file(sample(*args, **kwargs), odir, columns, sortby)
+    try:
+        return write_to_file(sample(*args, **kwargs), odir, columns, sortby)
+    except:
+        raise Exception(''.join(traceback.format_exception(*sys.exc_info())))
+
+
+
 
 
 def argparse_and_config():
@@ -257,6 +403,9 @@ def argparse_and_config():
     parser.add_argument("--samples",
                         type=int, default=100,
                         help="number of samples (default: 100)")
+    parser.add_argument("--resampling",
+                        action='store_true',
+                        help="resample the importance weights")
     parser.add_argument("--input-format",
                         type=str, default='cdec',
                         choices=['plain', 'cdec'],
@@ -339,20 +488,35 @@ def main():
                                       options.input_format,
                                       sid=sid,
                                       grammar_dir=options.grammars)
-                for sid, line in enumerate(sys.stdin)]
+                for sid, line in enumerate(sys.stdin)]  # easy to check variance (just need to multiply this by a number of trials) 
 
     logging.info('Distributing %d segments to %d jobs', len(segments), options.jobs)
 
     # log results
-    columns = ('n', 'r', 'p', 'q', 'd', 'v')
+    columns ='n importance log_up log_uq log_ur d v'.split()
+    #columns = ('n', 'r', 'p', 'q', 'd', 'v')
+
+    # testing something here
+    if False:
+        from instrumental import KLSampler
+        for seg in segments:
+            sampler = KLSampler(seg, options.samples, proxy_weights, target_weights, cdec_cfg_string, avgcoeff=1.0)
+            optq = sampler.optimise()
+            #samples = sampler.sample(optq)
+            #result = Result(seg, samples, [], options.resampling)
+            #write_to_file(result, output_dir, columns, options.sortby)
+
+        sys.exit(0)
+    # done
 
     pool = Pool(options.jobs)
     # distribute jobs
-    results = pool.map(partial(sample_and_save,
+    feedback = pool.map(partial(sample_and_save,
                                output_dir,
                                columns,
                                options.sortby,
                                n_samples=options.samples,
+                               resample=options.resampling, 
                                proxy_weights=proxy_weights,
                                target_weights=target_weights,
                                cdec_config_str=cdec_cfg_string),
@@ -361,7 +525,7 @@ def main():
     # summary of samples
     try:
         from tabulate import tabulate
-        print tabulate(results, headers=['job', 'derivations', 'strings'], tablefmt='pipe')
+        print tabulate(feedback, headers=('job', 'samples', 'derivations', 'strings', 'Zp/Zq', 'nonzero'), tablefmt='pipe')
     except ImportError:
         logging.info('Consider installing tabulate for some nice summaries')
 

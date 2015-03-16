@@ -1,0 +1,333 @@
+"""
+@author waziz
+"""
+import logging
+import sys
+import argparse
+import math
+import os
+import numpy as np
+import traceback
+from itertools import chain
+from collections import namedtuple, Counter, defaultdict
+from time import time
+from multiprocessing import Pool
+from functools import partial
+from ConfigParser import RawConfigParser
+from scipy.optimize import minimize, basinhopping
+
+import ff
+import cdeclib
+from util import fpairs2str, dict2str, fmap_dot, scaled_fmap
+from util import resample as do_resample
+from util.config import configure, section_literal_eval
+from util.io import SegmentMetaData
+from smt import SVector, Tree, Derivation
+from util.logtools import timethis
+from tabulate import tabulate
+
+
+class Sampler(object):
+        
+    RawSample = namedtuple('RawSample', 'projection vector count')
+
+    def __init__(self, segment, proxy_weights, target_weights, cdec_config_str=''):
+        """returns the proxy distribution encoded as a hypergraph"""
+        # creates a decoder if necessary
+        self.segment_ = segment
+        self.decoder_ = cdeclib.create_decoder(cdec_config_str, proxy_weights)
+        self.cdec_config_str_ = cdec_config_str
+        self.proxy_weights_ = proxy_weights
+        self.target_weights_ = target_weights
+        self._forest = None  # lazy computation
+        self._features = None  # lazy computation
+        
+    @property
+    def segment(self):
+        return self.segment_
+
+    @property
+    def forest(self):
+        """returns the hypergraph (produces it if necessary)"""
+        if self._forest is None:
+            logging.info('parsing (%d): %s', self.segment_.id, self.segment_.src)
+            # builds the proxy distribution
+            self._forest = cdeclib.build_proxy(str(self.segment_.src), self.segment_.grammar, self.decoder_)
+        return self._forest
+
+    @property
+    def features(self):
+        """returns all features in the forest (gathers it from forest if necessary)"""
+        if self._features is None:
+            self._features = frozenset(chain(*((f for f, v in e.feature_values) for e in self.forest.edges)))
+        return self._features
+
+    @timethis('Time to reweight the forest')
+    def reweight(self, proxy_weights):
+        self.proxy_weights_ = proxy_weights
+        if self._forest is not None:
+            self.forest.reweight(cdeclib.make_sparse_vector(proxy_weights))
+
+    @timethis('Time to sample')
+    def sample(self, n_samples):
+        """samples translation derivations from a forest"""
+        # pre-process the input (some scorers might require analysis of the input segment)
+        ff.preprocess_input(self.segment_)
+        # samples from the proxy distribution
+        q_samples = cdeclib.sample(self.forest, n_samples)
+        raw_samples = []
+        for derivation_str, sample_info in sorted(q_samples.iteritems(), key=lambda pair: len(pair[1]), reverse=True):
+            # computes additional features
+            extraff = ff.compute_features(ff.Hypothesis(source=str(self.segment_.src), translation=derivation_str))
+            # groups vectors associated with equivalent derivations
+            counter = Counter(fpairs for fpairs, _ in sample_info)
+            # compute target vectors
+            for q_fpairs, count in counter.iteritems():
+                # start with the features that are used in the proxy
+                fmap = dict(q_fpairs)
+                # include additional features (must not overwrite proxy features)
+                for fname, fvalue in extraff:
+                    fmap[fname] = fvalue
+                raw_samples.append(Sampler.RawSample(projection=derivation_str, vector=SVector(fpairs=fmap.iteritems()), count=count))  # TODO: get the actual derivation string from cdec
+                    
+        # resets scorers to a null state
+        ff.reset_scorers()
+        return raw_samples 
+
+
+class KLEstimates(object):
+    """
+    """
+
+    def __init__(self, 
+            derivations, 
+            q_wmap,  # q_features
+            p_wmap,  # p_features
+            active_features, 
+            empirical_q=False,
+            normalise_p=False,
+            stderr=None):
+        """
+        :param derivations: list of samples (Sampler.Sample)
+        :param q_wmap: a dict-like object representing the non-zero parameters of the proxy distribution
+        :param q_wmap: a dict-like object representing the non-zero parameters of the target distribution
+        :param active_features: the (already ordered) list of active features
+        :param empirical_q: if true, q(d) is estimated as n(d)/N (using the count alone),
+            if false, q(d) is estimated as n(d)uq(d)/\sum {n(d')uq(d')} (using the current dot product to smooth the counts -- remember that uq(d) = exp(lambda * g(d)))
+        :param normalise_p: if true, we estimate KL(q||p) where p(d) is estimated (via importance sampling),
+            if false, we estimate KL(q||up) = KL(q||p) - log Zp
+        """
+        
+        # 1) dot products
+        q_dot = np.array([fmap_dot(d.vector, q_wmap) for d in derivations])
+        p_dot = np.array([fmap_dot(d.vector, p_wmap) for d in derivations])
+        r_dot = p_dot - q_dot
+
+        # 2) counts: n(d) and n(y) 
+        nd = np.array([d.count for d in derivations], float)
+
+        # 3) instrumental probability: q(d) and q(y)
+        if empirical_q:
+            Zn = nd.sum()
+            qd = nd / Zn  # simply, the empirical distribution
+            log_qd = np.log(qd)
+        else:
+            log_uqd = np.log(nd) + q_dot
+            log_qd = log_uqd - np.logaddexp.reduce(log_uqd)
+            qd = np.exp(log_qd)
+       
+        # 4) importance weight: r(d) = ur(d)/Zr
+        log_urd = np.log(nd) + r_dot
+        log_rd = log_urd - np.logaddexp.reduce(log_urd)
+        rd = np.exp(log_rd)
+
+        # 5) expected feature vectors 
+        gd = np.array([d.vector.as_array(active_features) for d in derivations])
+        gdqd = (gd.transpose() * qd).transpose()
+        # <g(d)>_q
+        q_expected_g = gdqd.sum(0)
+        
+        # 6) KL(q||up) where up(d) = exp(theta f(d)) = exp(p_dot(d))
+        #       = \sum_d q(d) log (q(d)/up(d))
+        #       = \sum_d q(d) (log q(d) - log up(d))
+        #       = \sum_d q(d) (log q(d) - p_dot(d))
+        if normalise_p:
+            KL = (qd * (log_qd - log_rd)).sum()
+            dKLdl = (((gd - q_expected_g).transpose() * qd) * (log_qd - log_rd + 1)).transpose().sum(0)
+        else:
+            KL = (qd * (log_qd - p_dot)).sum()
+            dKLdl = (((gd - q_expected_g).transpose() * qd) * (log_qd - p_dot + 1)).transpose().sum(0)
+
+        if stderr is not None:
+            Y = np.array([d.projection.decode('ascii', 'ignore') for d in derivations])
+            print >> stderr, tabulate(np.column_stack((qd, rd, log_qd - log_rd, log_qd - p_dot, p_dot - q_dot, Y)), headers=['q(d)', 'p(d)', 'log q(d) - log p(d)', 'log q(d) - log up(d)', 'up(d) - uq(d)', 'yield'])
+
+        # 9) store data
+        self.p_wmap_ = p_wmap
+        self.q_wmap_ = q_wmap
+        self.nd_ = nd
+        self.qd_ = qd
+        self.rd_ = rd
+        self.KL_ = KL
+        self.dKL_ = dKLdl
+
+    @property
+    def KL(self):
+        return self.KL_
+
+    @property
+    def dKL(self):
+        return self.dKL_
+
+
+class KLSampler(object):
+        
+    DivergenceReturn = namedtuple('DivergenceReturn', 'KL dKL')
+    NoRegularisation = None
+    L1Regulariser = lambda w: LA.norm(w, 1)
+    L2Regulariser = lambda w: LA.norm(w, 2)
+
+    def __init__(self, 
+            segment, 
+            n_samples, 
+            qmap, 
+            pmap, 
+            cdec_config_str, 
+            regulariser=NoRegularisation, 
+            regulariser_weight=0.0,
+            avgcoeff=1.0):
+
+        if not (0 < avgcoeff <= 1.0):
+            raise ValueError('The coefficient of the moving average must be such that 0 < c <= 1.0, got %s' % avgcoeff)
+
+        self.n_samples_ = n_samples
+        self.qmap0_ = qmap
+        self.pmap_ = pmap
+        self.sampler_ = Sampler(segment, qmap, pmap, cdec_config_str)
+        self.features_ = sorted(self.sampler_.features)
+        logging.info('%d features', len(self.features_))
+        self.f2i_ = defaultdict(None, ((f,i) for i, f in enumerate(self.features_)))
+        self.regulariser_weight_ = regulariser_weight
+        self.regulariser_ = regulariser
+        logging.info('Q: %s', qmap)
+        logging.info('P: %s', pmap)
+        self.avgcoeff_ = 1.0
+        self.sample_history_ = None
+
+    def dict2nparray(self, wmap):
+        """converts a sparse weight vector (as a dict) into a dense np array"""
+        weights = np.zeros(len(self.features_))
+        for f, w in wmap.iteritems():
+            weights[self.f2i_[f]] = w
+        return weights
+
+    def nparray2dict(self, array):
+        """converts a dense weight vector (as a numpy array) into a sparse weight vector (as a dict)"""
+        nids = array.nonzero()[0]
+        return defaultdict(None, ((self.features_[fid], array[fid]) for fid in nids))
+        
+    def sample(self, qmap):
+        """returns samples from q grouped by derivation"""
+        # reweights the forest
+        self.sampler_.reweight(qmap)
+        # samples
+        samples = self.sampler_.sample(self.n_samples_)
+        # if the moving average coefficient of the current batch is 1.0, there is no point in computing considering previous samples
+        if self.avgcoeff_ == 1.0:
+            return samples
+        # otherwise we might need to merge sampled batches
+        if self.sample_history_ is None:  # except of course, in the first round
+            self.sample_history_ = samples
+            return samples
+        # compute a moving average
+        dmap = defaultdict(lambda : defaultdict(float))
+        for d in samples:
+            dmap[d.projection][d.vector] = d.count * self.avgcoeff_
+        for d in self.sample_history_:
+            dmap[d.projection][d.vector] += d.count * (1 - self.avgcoeff_)
+        samples = []
+        for projection, dinfo in dmap.iteritems():
+            for vector, count in dinfo.iteritems():
+                samples.append(Sampler.RawSample(projection=projection, vector=vector, count=count))
+        self.sample_history_ = samples
+        return samples
+
+
+    def estimates(self, samples, qmap, pmap):
+        """returns the objective and the jacobian"""
+        # compute KL estimates
+        # TODO: implement moving average of estimates
+        # TODO: fix lambda (the part that is common between q and p)
+        empdist = KLEstimates(samples,
+                q_wmap=qmap,
+                p_wmap=pmap,
+                active_features=self.features_,
+                empirical_q=False,
+                normalise_p=False,
+                stderr=sys.stderr)
+        return KLSampler.DivergenceReturn(empdist.KL, empdist.dKL)
+
+    def optimise(self):
+        """optimises the proxy for min KL(q||p)"""
+       
+        self.step = 1
+        self.iteration = 1
+        self.funcall = 1
+
+        def f(w):
+            # converts the dense np weight vector into a sparse dict
+            qmap = self.nparray2dict(w)
+            logging.info('[%d/%d/%d] nonzero weights: %d', self.step, self.iteration, self.funcall, len(qmap))
+            # samples from the proxy
+            sample = self.sample(qmap)
+            # estimate KL(q||p) and its derivatives wrt lambda 
+            obj, jac = self.estimates(sample, qmap, self.pmap_)
+            logging.info('[%d/%d/%d] KL=%s', self.step, self.iteration, self.funcall, obj)
+            # regularisation
+            if self.regulariser_ is not KLSampler.NoRegularisation:
+                regulariser = LA.norm(w, self.regulariser_)
+                obj = obj + self.regulariser_weight_ * regulariser
+                jac = jac + 2 * self.regulariser_weight_ * w
+                logging.info('[%d/%d/%d] Regularised KL=%s', self.step, self.iteration, self.funcall, obj)
+            self.funcall += 1
+            return obj, jac
+            
+        def callback(w):
+            logging.info('New lambdas: %s', w)
+            self.iteration += 1
+
+        def gcallback(w, f, a):
+            logging.info('New local minimum: %s', f)
+            self.step += 1
+        
+        logging.info('Optimasing KL(q||p)')
+        if False:
+            result = minimize(f,
+                    self.dict2nparray(self.qmap0_),  # initial weights
+                    method='L-BFGS-B', 
+                    jac=True, 
+                    callback=callback, 
+                    options={'maxiter': 10, 'maxfun': 50, 'ftol': 1e-6, 'gtol': 1e-6, 'disp': False})
+
+        minimiser_args = {
+                'method': 'L-BFGS-B',
+                'jac': True,
+                'callback': callback,
+                'options': {'maxiter': 10, 'maxfun': 50, 'ftol': 1e-6, 'gtol': 1e-6, 'disp': False}
+                }
+        result = basinhopping(f,
+                self.dict2nparray(self.qmap0_),  # initial weights
+                minimizer_kwargs=minimiser_args,
+                niter=10,
+                niter_success=5,  # TODO: relax the test (not strictly the same, but close enough for enough iterations)
+                callback=gcallback
+                )
+
+        qmap = self.nparray2dict(result.x)
+        logging.info('Final KL: %s', result.fun)
+        logging.info('Nonzero weights: %d', len(qmap))
+        logging.info('Final lambda: %s', fpairs2str(qmap.iteritems()))
+
+
+
+        return qmap 

@@ -168,11 +168,11 @@ def read_block(fi):
 
 
 def read_sampled_derivations(iterable, required=dict(
-    (k, k) for k in 'derivation:d vector:v score:p count:n importance:r'.split())):
+    (k, k) for k in 'derivation:d vector:v count:n log_ur:log_ur importance:r'.split())):
     """
     Parse a file containing sampled derivations. The file is structured as a table (tab-separated columns).
     The first line contains the column names.
-    We expect at least a fixed set of columns (e.g. derivation, vector, score, count, importance).
+    We expect at least a fixed set of columns (e.g. derivation, vector, count, importance).
     The table must be grouped by derivation.
     @return list of solutions
     """
@@ -191,10 +191,11 @@ def read_sampled_derivations(iterable, required=dict(
     D = []
     for row in (raw.strip().split('\t') for raw in iterable):
         k2v = {key: value for key, value in zip(colnames, row)}
-        d = Derivation(tree=Tree(k2v[required['derivation']]),
+        d = Derivation(tree=Tree(vecstr=k2v[required['derivation']]),
                        vector=SVector(k2v[required['vector']]),
                        count=int(k2v[required['count']]),
-                       log_importance=float(k2v[required['importance']]))
+                       log_ur=float(k2v[required['log_ur']]),
+                       importance=float(k2v[required['importance']]))
         D.append(d)
     return D
 

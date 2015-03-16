@@ -14,6 +14,7 @@ from smt import groupby, KBestSolution
 from functools import partial
 from util import scaled_fmap, dict2str
 from util.config import section_literal_eval, configure
+from util.wmap import WMap
 import mteval
 
 
@@ -46,14 +47,15 @@ def pack_nbest(empdist, target, nbest=-1, reward=True):
                                solution=empdist.solution(i)) for k, i in enumerate(ranked))
 
 
-def make_decisions(job_desc, headers, options, fnames, gnames):
+def make_decisions(job_desc, headers, options, q_wmap, p_wmap):
     # this code runs in a Pool, thus we wrap in try/except in order to have more informative exceptions
     jid, block = job_desc
     try:
         derivations = read_sampled_derivations(iter(block), headers)
-        empdist = EmpiricalDistribution(groupby(derivations, key=lambda d: d.tree.projection),
-                                        fnames,
-                                        gnames)
+        empdist = EmpiricalDistribution(derivations,
+                                        q_wmap=q_wmap,
+                                        p_wmap=p_wmap,
+                                        get_yield=lambda d: d.tree.projection)
 
         logging.info('%d unique strings', len(empdist))
 
@@ -90,20 +92,18 @@ def create_decision_rule_dir(workspace, decision_rule, metric_name=None):
     return output_dir
 
 
-def decide_and_save(job_desc, headers, options, fnames, gnames, output_dirs):
+def decide_and_save(job_desc, headers, options, q_wmap, p_wmap, output_dirs):
     # this code runs in a Pool, thus we wrap in try/except in order to have more informative exceptions
     jid, block = job_desc
     try:
         # make decisions
-        decisions = make_decisions(job_desc, headers, options, fnames, gnames)
+        decisions = make_decisions(job_desc, headers, options, q_wmap, p_wmap)
         # write to file if necessary
         for rule, ranking in decisions.iteritems():
             with open('{0}/{1}'.format(output_dirs[rule], jid), 'w') as out:
-                print >> out, '\t'.join(['#target', '#p', '#q', '#n', '#yield', '#f', '#g'])
+                print >> out, '\t'.join(['#target', '#p', '#q', '#yield'])
                 for solution in ranking:
-                    print >> out, solution.format_str(keys=['p', 'q', 'n', 'yield', 'f', 'g'],
-                                                      separator='\t', named=False,
-                                                      fnames=fnames, gnames=gnames)
+                    print >> out, solution.format_str(keys=['p', 'q', 'yield'])
                 print >> out
         return {rule: solutions[0] for rule, solutions in decisions.iteritems()}
     except:
@@ -165,13 +165,14 @@ def main():
 
     # parameters of the instrumental distribution
     proxy_weights = scaled_fmap(section_literal_eval(config.items('proxy')), options.proxy_scaling)
-    proxy_features = sorted(proxy_weights.iterkeys())
-    logging.debug('proxy (scaling=%f): %s', options.proxy_scaling, dict2str(proxy_weights, sort=True))
+    proxy_wmap = WMap(proxy_weights.iteritems())
+    #logging.debug('proxy (scaling=%f): %s', options.proxy_scaling, dict2str(proxy_weights, sort=True))
+    logging.debug('proxy (scaling=%f): %s', options.proxy_scaling, str(proxy_wmap))
 
     # parameters of the target distribution
     target_weights = scaled_fmap(section_literal_eval(config.items('target')), options.target_scaling)
-    target_features = sorted(target_weights.iterkeys())
-    logging.debug('target (scaling=%f): %s', options.target_scaling, dict2str(target_weights, sort=True))
+    target_wmap = WMap(target_weights.iteritems())
+    logging.debug('target (scaling=%f): %s', options.target_scaling, str(target_wmap))
 
     # loads mteval modules
     if config.has_section('chisel:metrics'):
@@ -223,7 +224,7 @@ def main():
         logging.info("Writing 1-best '%s' yields to %s", rule, one_best_files[rule])
 
     # TODO: generalise this
-    headers = {'derivation': 'd', 'vector': 'v', 'score': 'p', 'count': 'n', 'importance': 'r'}
+    headers = {'derivation': 'd', 'vector': 'v', 'count': 'n', 'log_ur': 'log_ur', 'importance': 'importance'}
 
     # read jobs from workspace
     input_files = list_numbered_files(samples_dir)
@@ -248,8 +249,8 @@ def main():
     results = pool.map(partial(decide_and_save,
                                headers=headers,
                                options=options,
-                               fnames=target_features,
-                               gnames=proxy_features,
+                               q_wmap=proxy_wmap,
+                               p_wmap=target_wmap,
                                output_dirs=output_dirs),
                        jobs)
     # save the 1-best solution for each decision rule in a separate file

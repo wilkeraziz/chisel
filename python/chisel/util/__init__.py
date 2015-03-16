@@ -1,6 +1,7 @@
 __author__ = 'waziz'
 
 from itertools import izip
+import numpy as np
 
 
 def scaled_fmap(fmap, scaling=1.0):
@@ -41,3 +42,17 @@ def npvec2str(nparray, fnames=None):
 def kv2str(key, value, named=True):
     return '{0}={1}'.format(key, value) if named else str(value)
 
+
+def resample(p, size):
+    """Resample elements according to a distribution p and returns an empirical distribution"""
+    support = p.size
+    hist, edges = np.histogram(np.random.choice(np.arange(support), size, p=p), bins=np.arange(support + 1), density=True)
+    return hist
+
+
+def obj2id(element, vocab):
+    v = vocab.get(element, None)
+    if v is None:
+        v = len(vocab)
+        vocab[element] = v
+    return v

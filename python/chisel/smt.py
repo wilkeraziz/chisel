@@ -10,6 +10,7 @@ from collections import defaultdict
 from semiring import CountSemiring, ProbabilitySemiring
 import numpy as np
 from util import npvec2str, kv2str
+from operator import xor
 
 
 class SVector(object):
@@ -24,19 +25,29 @@ class SVector(object):
     Iterating with __iter__ returns the feature values in order (as if this was a normal vector).
     """
 
-    def __init__(self, vecstr):
-        # disambiguate spaces (separate components by tabs)
-        vecstr = re.sub(r' ([^ ]+=)', r'\t\1', vecstr)
-        pairs = vecstr.split('\t')
-        fmap = defaultdict()
-        # parse each component's features
-        for pair in pairs:
-            strkey, strvalue = pair.split('=')
-            strvalue = re.sub('[][()]', '', strvalue)
-            fmap[strkey] = np.array([float(v) for v in strvalue.split()])
-        self.fmap_ = fmap
-        self.keys_ = tuple(sorted(fmap.iterkeys()))
-        self.values_ = tuple(v for k, v in sorted(fmap.iteritems(), key = lambda pair : pair[0]))
+    def __init__(self, vecstr=None, fpairs=None):
+        if not xor(vecstr is None, fpairs is None):
+            raise ValueError('Either vecstr or fpairs must be given')
+        if fpairs is not None:
+            self.fmap_ = defaultdict(None, fpairs)
+        else:
+            # disambiguate spaces (separate components by tabs)
+            vecstr = re.sub(r' ([^ ]+=)', r'\t\1', vecstr)
+            pairs = vecstr.split('\t')
+            fmap = defaultdict()
+            # parse each component's features
+            for pair in pairs:
+                strkey, strvalue = pair.split('=')
+                strvalue = re.sub('[][()]', '', strvalue)
+                if len(strvalue.split()) != 1:
+                    raise ValueError('Something is wrong about this component: %s=%s' % (strkey, strvalue))
+                fmap[strkey] = float(strvalue)
+                #fmap[strkey] = np.array([float(v) for v in strvalue.split()])
+            self.fmap_ = fmap
+        
+        self.keys_ = tuple(sorted(self.fmap_.iterkeys()))
+        self.values_ = tuple(v for k, v in sorted(self.fmap_.iteritems(), key = lambda pair: pair[0]))
+        
 
     @property
     def keys(self):
@@ -46,13 +57,18 @@ class SVector(object):
     def values(self):
         return self.values_
 
-    def as_array(self, selection = None):
+    def as_array(self, selection=None):
         if selection is None:
-            return np.array([v for v in itertools.chain(*self.values_)])
-        return np.array([fvalue for fvalue in itertools.chain(*[self.fmap_.get(fname, [0.0]) for fname in selection])])
+            return np.array(self.values_)
+            #return np.array([v for v in itertools.chain(*self.values_)])
+        return np.array([self.fmap_.get(name, 0.0) for name in selection])
+        #return np.array([fvalue for fvalue in itertools.chain(*[self.fmap_.get(fname, [0.0]) for fname in selection])])
 
     def __getitem__(self, key):
         return self.fmap_[key]
+
+    def get(self, key, default=0.0):
+        return self.fmap_.get(key, default)
 
     def __contains__(self, key):
         return key in self.fmap_
@@ -69,11 +85,14 @@ class SVector(object):
     def n_components(self):
         return len(self.fmap_)
 
-    def n_features(self):
-        return sum(len(vec) for vec in self.itervalues(self))
+    #def n_features(self):
+    #    return sum(len(vec) for vec in self.itervalues(self))
 
     def __str__(self):
-        return ' '.join(('%s=%s' % (k, str(v[0]))) if len(v) == 1 else ('%s=(%s)' % (k, ' '.join(str(x) for x in v))) for k, v in self.iteritems())
+        return ' '.join('{0}={1}'.format(k, v) for k, v in itertools.izip(self.keys_, self.values_))
+    
+    #def __str__(self):
+    #    return ' '.join(('%s=%s' % (k, str(v[0]))) if len(v) == 1 else ('%s=(%s)' % (k, ' '.join(str(x) for x in v))) for k, v in self.iteritems())
 
 
 class Yield(object):
@@ -174,12 +193,12 @@ class Derivation(object):
     A weighted derivation sampled a number of times
     """
 
-    def __init__(self, tree, vector, count, log_importance=0.0):
+    def __init__(self, tree, vector, count, log_ur, importance):
         self.tree_ = tree
         self.vector_ = vector
         self.count_ = count
-        self.log_importance_ = log_importance
-        self.importance_ = np.exp(log_importance)
+        self.log_ur_ = log_ur
+        self.importance_ = importance
 
     @property
     def tree(self):
@@ -198,8 +217,8 @@ class Derivation(object):
         return self.count_
 
     @property
-    def log_importance(self):
-        return self.log_importance_
+    def log_ur(self):
+        return self.log_ur_
 
     @property
     def importance(self):
@@ -215,7 +234,7 @@ class Derivation(object):
         return not (self == other)
 
     def __str__(self):
-        return '%s\t%s\t%s\t%s\t%s' % (self.count_, self.log_importance_, self.tree_, self.vector_)
+        return '%s\t%s\t%s\t%s' % (self.count_, self.log_ur_, self.tree_, self.vector_)
 
 
 class DerivationGroup(object):
@@ -260,6 +279,12 @@ class DerivationGroup(object):
         @return total count according to op
         """
         return reduce(op, (d.count for d in self.derivations_))
+
+    def importance(self, op=ProbabilitySemiring.sum):
+        """
+        Returns the total importance (as importance is a normalised estimate which already incorporates the count of the derivation, we can simply sum)
+        """
+        return reduce(op, (d.importance for d in self.derivations_))
     
 
 def groupby(derivations, key):
@@ -273,33 +298,19 @@ class Solution(object):
     """
     """
 
-    def __init__(self, Dy, f, g, p, q, n):
+    def __init__(self, Dy, p, q):
         """
         :param Dy: the group of derivations yielding y
-        :param f: the target feature vector
-        :param g: the instrumental feature vector
         :param p: the (normalised) target posterior p(y)
         :param q: the (normalised) instrumental posterior q(y)
-        :param n: (unnormalised) number of times this solution was sampled from q
         """
         self.Dy_ = Dy
-        self.f_ = f
-        self.g_ = g
         self.p_ = p
         self.q_ = q
-        self.n_ = n
 
     @property
     def Dy(self):
         return self.Dy_
-
-    @property
-    def f(self):
-        return self.f_
-
-    @property
-    def g(self):
-        return self.g_
 
     @property
     def p(self):
@@ -309,23 +320,10 @@ class Solution(object):
     def q(self):
         return self.q_
 
-    @property
-    def n(self):
-        return self.n_
-
     def __str__(self):
-        return 'p={0} q={1} n={2} yield={3} f={4} g={5}'.format(self.p_,
-                                                                self.q_,
-                                                                self.n_,
-                                                                self.Dy_.projection,
-                                                                npvec2str(self.f_),
-                                                                npvec2str(self.g_))
+        return 'p={0} q={1} yield={2}'.format(self.p_, self.q_, self.Dy_.projection)
 
-    def format_str(self, keys=['p', 'q', 'n', 'yield', 'f', 'g'],
-                   separator='\t',
-                   named=False,
-                   fnames=None,
-                   gnames=None):
+    def format_str(self, keys=['p', 'q', 'yield'], separator='\t', named=True):
         fields = [None] * len(keys)
         for i, key in enumerate(keys):
             value = None
@@ -333,14 +331,8 @@ class Solution(object):
                 value = kv2str('p', self.p_, named)
             elif key == 'q':
                 value = kv2str('q', self.q_, named)
-            elif key == 'n':
-                value = kv2str('n', self.n_, named)
             elif key == 'yield':
                 value = kv2str('yield', self.Dy_.projection, named)
-            elif key == 'f':
-                value = kv2str('f', npvec2str(self.f_, fnames), named)
-            elif key == 'g':
-                value = kv2str('g', npvec2str(self.g_, gnames), named)
             else:
                 raise Exception('Unkonwn field: %s' % key)
             fields[i] = value
@@ -377,10 +369,6 @@ class KBestSolution(object):
     def __str__(self):
         return 'target={0} {1}'.format(self.target_, self.solution_)
 
-    def format_str(self, keys=['p', 'q', 'n', 'yield', 'f', 'g'],
-                   separator='\t',
-                   named=False,
-                   fnames=None,
-                   gnames=None):
+    def format_str(self, keys=['p', 'q', 'yield'], separator='\t', named=True):
         return separator.join([kv2str('target', self.target_, named),
-                               self.solution_.format_str(keys, separator, named, fnames, gnames)])
+                               self.solution_.format_str(keys, separator, named)])

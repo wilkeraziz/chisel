@@ -4,6 +4,7 @@ import cdec
 import logging
 import gzip
 from collections import defaultdict
+from util.logtools import debugtime
 
 
 def make_cdec_config_string(cdec_items, cdec_features_items):
@@ -69,16 +70,31 @@ def build_proxy(input_str, grammar_file, decoder):
     return forest
 
 
+@debugtime('cdeclib.sample [time]')
 def sample(forest, n):
     """
     Samples n derivations from forest
     :param forest: hypergraph
     :param n: number of samples
-    :return: a defaultdict mapping from a translation string to a list of tuples of the kind (fmap, dot)
+    :return: a defaultdict mapping from a translation string to a list of tuples of the kind (fpairs, dot)
     """
     sampledict = defaultdict(list)
     for sample_str, sample_dot, sample_fmap in forest.sample_hypotheses(n):
-        sampledict[sample_str.encode('utf8')].append((dict(sample_fmap), sample_dot))
+        sampledict[sample_str.encode('utf8')].append((tuple(sample_fmap), sample_dot))
     return sampledict
 
 
+def make_sparse_vector(fmap):
+    """returns a cdec.SparseVector from a dict-like object"""
+    weights = cdec.SparseVector()
+    for fname, fval in fmap.iteritems():
+        weights[fname] = fval
+    return weights
+
+
+def make_dense_vector(fmap):
+    """returns a cdec.DenseVector from a dict-like object"""
+    weights = cdec.DenseVector()
+    for fname, fval in fmap.iteritems():
+        weights[fname] = fval
+    return weights
