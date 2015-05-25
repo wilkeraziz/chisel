@@ -191,7 +191,7 @@ def read_sampled_derivations(iterable, required=dict(
     D = []
     for row in (raw.strip().split('\t') for raw in iterable):
         k2v = {key: value for key, value in zip(colnames, row)}
-        d = Derivation(tree=Tree(vecstr=k2v[required['derivation']]),
+        d = Derivation(tree=Tree(derivationstr=k2v[required['derivation']]),
                        vector=SVector(k2v[required['vector']]),
                        count=int(k2v[required['count']]),
                        log_ur=float(k2v[required['log_ur']]),

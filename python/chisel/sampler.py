@@ -163,7 +163,7 @@ class ImportanceSample(object):
 
 class Result(object):
 
-    def __init__(self, segment, raw_samples, q_active_features, resample=True):
+    def __init__(self, segment, raw_samples, resample=True):
         """
         A result associated a segment with its importance samples
         :param segment: the input segment
@@ -171,7 +171,11 @@ class Result(object):
         :param resample: if True resamples the importance (helps lower variance)
         """
         self.segment_ = segment
-        self.q_active_features_ = frozenset(q_active_features)
+        
+        # 1) dot products
+        #q_dot = np.array([fmap_dot(d.vector, q_wmap) for d in raw_samples])
+        #p_dot = np.array([fmap_dot(d.vector, p_wmap) for d in raw_samples])
+        #r_dot = p_dot - q_dot
 
         # get total samples
         n_samples = sum(raw.count for raw in raw_samples)
@@ -187,14 +191,19 @@ class Result(object):
         log_Zr = np.logaddexp.reduce(log_ur)
         log_r = log_ur - log_Zr
         importance = np.exp(log_r)
+        
+        mean_r = importance.mean()
+        mean_sr = np.exp(log_r * 2).mean()
+        ne = importance.size * mean_r * mean_r / mean_sr
 
         if resample:  # importance resampling
             importance = do_resample(np.exp(log_r), n_samples)
 
         self.n_samples_ = n_samples
-        self.nonzero_ = np.array([raw_samples[i].count for i in np.nonzero(importance)[0]], float).sum() / n_samples
+        #self.nonzero_ = np.array([raw_samples[i].count for i in np.nonzero(importance)[0]], float).sum() / n_samples
         self.Zratio_ = log_Zr - np.log(n_samples)
-        logging.debug('%d samples (nonzero=%f) Zp/Zq=%f', self.n_samples_, self.nonzero_, self.Zratio_)
+        self.ne_ = ne
+        logging.debug('%d samples (ne=%f) Zp/Zq=%f', self.n_samples_, self.ne_, self.Zratio_)
 
         self.samples_ = [ImportanceSample(derivation_str=raw.derivation_str,
             count=raw.count,
@@ -224,16 +233,12 @@ class Result(object):
         return self.n_samples_
 
     @property
-    def q_active_features(self):
-        return self.q_active_features_
-
-    @property
     def Zratio(self):
         return self.Zratio_
 
     @property
-    def nonzero(self):
-        return self.nonzero_
+    def ne(self):
+        return self.ne_
 
     def n_derivations(self):
         return len(self.samples_)
@@ -302,9 +307,6 @@ def sample(segment, n_samples, resample, proxy_weights, target_weights, cdec_con
                                                log_up=log_up,
                                                log_uq=log_uq))
 
-    # gather all features in forest
-    q_active_features = frozenset(itertools.chain(*((f for f, v in e.feature_values) for e in forest.edges)))
-
     """unnorm_r = np.array([x.log_r + np.log(x.count) for x in is_samples], float)
     total_r = np.logaddexp.reduce(unnorm_r)
     norm_r = unnorm_r - total_r
@@ -322,7 +324,7 @@ def sample(segment, n_samples, resample, proxy_weights, target_weights, cdec_con
 
     # resets scorers to a null state
     ff.reset_scorers()
-    return Result(segment, raw_samples, q_active_features, resample=resample)
+    return Result(segment, raw_samples, resample=resample)
 
 
 def batch_sample(segments, n_samples, resample, cdec_config_str, proxy_weights, target_weights):
@@ -355,7 +357,7 @@ def write_to_file(result, odir, columns, sortby):
             for s in result.sorted(sortby):
                 print >> out, s.format_str(columns)
             print >> out
-        return result.segment.id, result.n_samples, result.n_derivations(), result.n_strings(), result.Zratio, result.nonzero
+        return result.segment.id, result.n_samples, result.n_derivations(), result.n_strings(), result.Zratio, result.ne
     except:
         raise Exception('job={0} exception={1}'.format(result.segment.id,
                                                        ''.join(traceback.format_exception(*sys.exc_info()))))
@@ -403,6 +405,9 @@ def argparse_and_config():
     parser.add_argument("--samples",
                         type=int, default=100,
                         help="number of samples (default: 100)")
+    parser.add_argument("--tuning-samples",
+                        type=int, default=100,
+                        help="number of samples when tuning the proxy (default: 100)")
     parser.add_argument("--resampling",
                         action='store_true',
                         help="resample the importance weights")
@@ -425,6 +430,9 @@ def argparse_and_config():
     parser.add_argument('--verbose', '-v',
                         action='store_true',
                         help='increases verbosity')
+    parser.add_argument('--tune', '-T',
+                        action='store_true',
+                        help='Tune the proxy distribution')
 
     args, config, failed = configure(parser,
                                      set_defaults=['chisel:model', 'chisel:sampler'],
@@ -497,17 +505,35 @@ def main():
     #columns = ('n', 'r', 'p', 'q', 'd', 'v')
 
     # testing something here
-    if False:
-        from instrumental import KLSampler
+    if True:
+        from instrumental import Sampler, KLOptimiser
         for seg in segments:
-            sampler = KLSampler(seg, options.samples, proxy_weights, target_weights, cdec_cfg_string, avgcoeff=1.0)
-            optq = sampler.optimise()
-            #samples = sampler.sample(optq)
-            #result = Result(seg, samples, [], options.resampling)
+            
+            sampler = Sampler(seg, proxy_weights, target_weights, cdec_cfg_string)
+
+            if options.tune:  # perhaps we tune Q by optimising KL(q||p)
+                optimiser = KLOptimiser(seg, 
+                        options.tuning_samples, 
+                        proxy_weights, 
+                        target_weights, 
+                        cdec_cfg_string, 
+                        avgcoeff=1.0)
+                optq = optimiser.optimise()  # optimise the proxy
+                sampler.reweight(optq)  # reweight the forest
+            
+            # samples
+            samples = sampler.sample(options.samples)
+            sampler.save(samples, output_dir, '.optimised' if options.tune else '.normal')
+            #TODO: update chisel.decision to deal with the clearner format (and with the tuned parameters)
+            #TODO: update chisel.tuning if necessary
+
+
+            #result = Result(seg, samples, options.resampling)
             #write_to_file(result, output_dir, columns, options.sortby)
 
         sys.exit(0)
     # done
+
 
     pool = Pool(options.jobs)
     # distribute jobs
@@ -525,7 +551,7 @@ def main():
     # summary of samples
     try:
         from tabulate import tabulate
-        print tabulate(feedback, headers=('job', 'samples', 'derivations', 'strings', 'Zp/Zq', 'nonzero'), tablefmt='pipe')
+        print tabulate(feedback, headers=('job', 'samples', 'derivations', 'strings', 'Zp/Zq', 'Ne'), tablefmt='pipe')
     except ImportError:
         logging.info('Consider installing tabulate for some nice summaries')
 

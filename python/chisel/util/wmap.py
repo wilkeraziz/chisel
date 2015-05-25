@@ -6,8 +6,9 @@ from collections import defaultdict
 class WMap(object):
 
     def __init__(self, pairs):
-        self.features_ = tuple(k for k, v in pairs)
-        self.weights_ = np.array([v for k, v in pairs], float)
+        p1, p2 = itertools.tee(pairs, 2)
+        self.features_ = tuple(k for k, v in p1)
+        self.weights_ = np.array([v for k, v in p2], float)
 
     def __len__(self):
         return len(self.weights_)

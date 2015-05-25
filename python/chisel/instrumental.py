@@ -25,6 +25,7 @@ from util.io import SegmentMetaData
 from smt import SVector, Tree, Derivation
 from util.logtools import timethis
 from tabulate import tabulate
+from scipy import linalg as LA
 
 
 class Sampler(object):
@@ -35,16 +36,22 @@ class Sampler(object):
         """returns the proxy distribution encoded as a hypergraph"""
         # creates a decoder if necessary
         self.segment_ = segment
-        self.decoder_ = cdeclib.create_decoder(cdec_config_str, proxy_weights)
         self.cdec_config_str_ = cdec_config_str
         self.proxy_weights_ = proxy_weights
         self.target_weights_ = target_weights
+        self._decoder = None # laxy computation
         self._forest = None  # lazy computation
         self._features = None  # lazy computation
-        
+
     @property
     def segment(self):
         return self.segment_
+
+    @property
+    def decoder(self):
+        if self._decoder is None:
+            self._decoder = cdeclib.create_decoder(self.cdec_config_str_, self.proxy_weights_)
+        return self._decoder
 
     @property
     def forest(self):
@@ -52,7 +59,7 @@ class Sampler(object):
         if self._forest is None:
             logging.info('parsing (%d): %s', self.segment_.id, self.segment_.src)
             # builds the proxy distribution
-            self._forest = cdeclib.build_proxy(str(self.segment_.src), self.segment_.grammar, self.decoder_)
+            self._forest = cdeclib.build_proxy(str(self.segment_.src), self.segment_.grammar, self.decoder)
         return self._forest
 
     @property
@@ -94,6 +101,21 @@ class Sampler(object):
         ff.reset_scorers()
         return raw_samples 
 
+    def save(self, raw_samples, odir, suffix=''):
+        with open('{0}/{1}{2}'.format(odir, self.segment_.id, suffix), 'w') as fo:
+            print >> fo, '[proxy]'
+            print >> fo, '\n'.join('{0}={1}'.format(k, v) for k, v in sorted(self.proxy_weights_.iteritems(), key=lambda (k,v): k))
+            print >> fo
+
+            print >> fo, '[target]'
+            print >> fo, '\n'.join('{0}={1}'.format(k, v) for k, v in sorted(self.target_weights_.iteritems(), key=lambda (k,v): k))
+            print >> fo
+
+            print >> fo, '[samples]'
+            print >> fo, '# count projection vector'
+            for sample in sorted(raw_samples, key=lambda r: r.count, reverse=True):
+                print >> fo, '{0}\t{1}\t{2}'.format(sample.count, sample.projection, sample.vector)
+
 
 class KLEstimates(object):
     """
@@ -104,7 +126,7 @@ class KLEstimates(object):
             q_wmap,  # q_features
             p_wmap,  # p_features
             active_features, 
-            empirical_q=False,
+            empirical_q=True,
             normalise_p=False,
             stderr=None):
         """
@@ -140,6 +162,9 @@ class KLEstimates(object):
         log_urd = np.log(nd) + r_dot
         log_rd = log_urd - np.logaddexp.reduce(log_urd)
         rd = np.exp(log_rd)
+        mean_r = rd.mean()
+        mean_sr = np.exp(log_rd * 2).mean()
+        ne = rd.size * mean_r * mean_r / mean_sr
 
         # 5) expected feature vectors 
         gd = np.array([d.vector.as_array(active_features) for d in derivations])
@@ -158,7 +183,7 @@ class KLEstimates(object):
             KL = (qd * (log_qd - p_dot)).sum()
             dKLdl = (((gd - q_expected_g).transpose() * qd) * (log_qd - p_dot + 1)).transpose().sum(0)
 
-        if stderr is not None:
+        if stderr is not None:  # TODO report aggregated (by Y) values
             Y = np.array([d.projection.decode('ascii', 'ignore') for d in derivations])
             print >> stderr, tabulate(np.column_stack((qd, rd, log_qd - log_rd, log_qd - p_dot, p_dot - q_dot, Y)), headers=['q(d)', 'p(d)', 'log q(d) - log p(d)', 'log q(d) - log up(d)', 'up(d) - uq(d)', 'yield'])
 
@@ -170,6 +195,7 @@ class KLEstimates(object):
         self.rd_ = rd
         self.KL_ = KL
         self.dKL_ = dKLdl
+        self.ne_ = ne
 
     @property
     def KL(self):
@@ -179,10 +205,13 @@ class KLEstimates(object):
     def dKL(self):
         return self.dKL_
 
+    @property
+    def ne(self):
+        return self.ne_
 
-class KLSampler(object):
+class KLOptimiser(object):
         
-    DivergenceReturn = namedtuple('DivergenceReturn', 'KL dKL')
+    DivergenceReturn = namedtuple('DivergenceReturn', 'KL dKL ne')
     NoRegularisation = None
     L1Regulariser = lambda w: LA.norm(w, 1)
     L2Regulariser = lambda w: LA.norm(w, 2)
@@ -193,7 +222,7 @@ class KLSampler(object):
             qmap, 
             pmap, 
             cdec_config_str, 
-            regulariser=NoRegularisation, 
+            regulariser=NoRegularisation, #L1Regulariser, #NoRegularisation, 
             regulariser_weight=0.0,
             avgcoeff=1.0):
 
@@ -211,27 +240,32 @@ class KLSampler(object):
         self.regulariser_ = regulariser
         logging.info('Q: %s', qmap)
         logging.info('P: %s', pmap)
-        self.avgcoeff_ = 1.0
+        self.avgcoeff_ = avgcoeff
         self.sample_history_ = None
+
+    def qmap0(self):
+        return self.qmap0_
 
     def dict2nparray(self, wmap):
         """converts a sparse weight vector (as a dict) into a dense np array"""
         weights = np.zeros(len(self.features_))
         for f, w in wmap.iteritems():
-            weights[self.f2i_[f]] = w
+            weights[self.f2i_.get(f, 0)] = w
         return weights
 
     def nparray2dict(self, array):
         """converts a dense weight vector (as a numpy array) into a sparse weight vector (as a dict)"""
         nids = array.nonzero()[0]
         return defaultdict(None, ((self.features_[fid], array[fid]) for fid in nids))
-        
-    def sample(self, qmap):
+
+    def sample(self, qmap, n_samples=None):
         """returns samples from q grouped by derivation"""
+        if n_samples is None:
+            n_samples = self.n_samples_
         # reweights the forest
         self.sampler_.reweight(qmap)
         # samples
-        samples = self.sampler_.sample(self.n_samples_)
+        samples = self.sampler_.sample(n_samples)
         # if the moving average coefficient of the current batch is 1.0, there is no point in computing considering previous samples
         if self.avgcoeff_ == 1.0:
             return samples
@@ -265,7 +299,7 @@ class KLSampler(object):
                 empirical_q=False,
                 normalise_p=False,
                 stderr=sys.stderr)
-        return KLSampler.DivergenceReturn(empdist.KL, empdist.dKL)
+        return KLOptimiser.DivergenceReturn(empdist.KL, empdist.dKL, empdist.ne)
 
     def optimise(self):
         """optimises the proxy for min KL(q||p)"""
@@ -281,11 +315,11 @@ class KLSampler(object):
             # samples from the proxy
             sample = self.sample(qmap)
             # estimate KL(q||p) and its derivatives wrt lambda 
-            obj, jac = self.estimates(sample, qmap, self.pmap_)
-            logging.info('[%d/%d/%d] KL=%s', self.step, self.iteration, self.funcall, obj)
+            obj, jac, ne = self.estimates(sample, qmap, self.pmap_)
+            logging.info('[%d/%d/%d] KL=%s ne=%f', self.step, self.iteration, self.funcall, obj, ne)
             # regularisation
-            if self.regulariser_ is not KLSampler.NoRegularisation:
-                regulariser = LA.norm(w, self.regulariser_)
+            if self.regulariser_ is not KLOptimiser.NoRegularisation:
+                regulariser = self.regulariser_(w)  # LA.norm(w, self.regulariser_)
                 obj = obj + self.regulariser_weight_ * regulariser
                 jac = jac + 2 * self.regulariser_weight_ * w
                 logging.info('[%d/%d/%d] Regularised KL=%s', self.step, self.iteration, self.funcall, obj)
@@ -300,26 +334,26 @@ class KLSampler(object):
             logging.info('New local minimum: %s', f)
             self.step += 1
         
-        logging.info('Optimasing KL(q||p)')
+        logging.info('Optimising KL(q||p)')
         if False:
             result = minimize(f,
                     self.dict2nparray(self.qmap0_),  # initial weights
                     method='L-BFGS-B', 
                     jac=True, 
                     callback=callback, 
-                    options={'maxiter': 10, 'maxfun': 50, 'ftol': 1e-6, 'gtol': 1e-6, 'disp': False})
+                    options={'maxiter': 10, 'maxfun': 20, 'ftol': 1e-6, 'gtol': 1e-6, 'disp': False})
 
         minimiser_args = {
                 'method': 'L-BFGS-B',
                 'jac': True,
                 'callback': callback,
-                'options': {'maxiter': 10, 'maxfun': 50, 'ftol': 1e-6, 'gtol': 1e-6, 'disp': False}
+                'options': {'maxiter': 5, 'maxfun': 10, 'ftol': 1e-6, 'gtol': 1e-6, 'disp': False}
                 }
         result = basinhopping(f,
                 self.dict2nparray(self.qmap0_),  # initial weights
                 minimizer_kwargs=minimiser_args,
-                niter=10,
-                niter_success=5,  # TODO: relax the test (not strictly the same, but close enough for enough iterations)
+                niter=3,
+                niter_success=2,  # TODO: relax the test (not strictly the same, but close enough for enough iterations)
                 callback=gcallback
                 )
 
@@ -327,7 +361,6 @@ class KLSampler(object):
         logging.info('Final KL: %s', result.fun)
         logging.info('Nonzero weights: %d', len(qmap))
         logging.info('Final lambda: %s', fpairs2str(qmap.iteritems()))
-
 
 
         return qmap 

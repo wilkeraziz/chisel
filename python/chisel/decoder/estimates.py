@@ -115,6 +115,7 @@ class EmpiricalDistribution(object):
         self.dpdt_ = dpdt
         self.kl_ = KL
         self.dkldl_ = dKLdl
+        self.upy_ = np.exp(log_upy)
 
 
     def __iter__(self):
