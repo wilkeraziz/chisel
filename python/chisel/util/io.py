@@ -6,6 +6,8 @@ import logging
 from chisel.smt import Yield, Derivation, Tree, SVector
 import math
 from glob import glob
+from collections import defaultdict, deque
+from wmap import WMap
 
 
 # TODO: generalise format to be able to read lines with repeated keys
@@ -167,37 +169,77 @@ def read_block(fi):
     return block
 
 
-def read_sampled_derivations(iterable, required=dict(
-    (k, k) for k in 'derivation:d vector:v count:n log_ur:log_ur importance:r'.split())):
+def read_sampled_derivations(iterable):
     """
-    Parse a file containing sampled derivations. The file is structured as a table (tab-separated columns).
-    The first line contains the column names.
-    We expect at least a fixed set of columns (e.g. derivation, vector, count, importance).
-    The table must be grouped by derivation.
-    @return list of solutions
-    """
-    # logging.debug('reading from %s', iterable)
-    # get the column names
-    raw = next(iterable)
-    if not raw.startswith('#'):
-        raise Exception('missing header')
-    colnames = [colname.replace('#', '') for colname in raw.strip().split('\t')]
-    needed = frozenset(required.itervalues())
-    # sanity check
-    if not (needed <= frozenset(colnames)):
-        raise Exception('missing columns: %s' % ', '.join(needed - frozenset(colnames)))
-    # logging.debug('%d columns: %s', len(colnames), colnames)
-    # parse rows
-    D = []
-    for row in (raw.strip().split('\t') for raw in iterable):
-        k2v = {key: value for key, value in zip(colnames, row)}
-        d = Derivation(tree=Tree(derivationstr=k2v[required['derivation']]),
-                       vector=SVector(k2v[required['vector']]),
-                       count=int(k2v[required['count']]),
-                       log_ur=float(k2v[required['log_ur']]),
-                       importance=float(k2v[required['importance']]))
-        D.append(d)
-    return D
 
-def sampled_derivations_from_file(input_file, headers):
-    return read_sampled_derivations(iter(read_block(open(input_file))), headers)
+    Read a file structed as follows
+
+        [proxy]
+        feature=value
+        ...
+
+        [target]
+        feature=value
+        ...
+
+        [samples]
+        # count projection vector
+        ...
+    """
+    
+    reserved = set(['[proxy]', '[target]', '[samples]'])
+
+    def read_weights(Q):
+        wmap = {}
+        while Q:
+            line = Q.popleft()
+            if not line or line.startswith('#'):  # discarded lines
+                continue
+            if line in reserved:  # stop criterion
+                Q.appendleft(line)
+                break
+            try:  # parse a pair
+                k, v = line.split('=')
+                wmap[k] = float(v)
+            except:
+                raise ValueError('Incorrectly formatted key-value pair: %s', line)
+        return wmap
+    
+    def read_samples(Q):
+        samples = []
+        while Q:
+            line = Q.popleft()
+            if not line or line.startswith('#'):  # discarded lines
+                continue
+            if line in reserved:  # stop criterion
+                Q.appendleft(line)
+                break
+            try:  # parse a row
+                count, derivation, fmap = line.split('\t')
+                d = Derivation(tree=Tree(derivationstr=derivation),
+                               vector=SVector(fmap),
+                               count=long(count))
+                samples.append(d)
+            except:
+                raise ValueError('Incorrectly formatted sample: %s' % line)
+        return samples
+
+    Q = deque(line.strip() for line in iterable)
+    qmap = {}
+    pmap = {}
+    samples = []
+    while Q:
+        line = Q.popleft()
+        if not line or line.startswith('#'):
+            continue
+        if line == '[proxy]':
+            qmap = read_weights(Q)
+        elif line == '[target]':
+            pmap = read_weights(Q)
+        elif line == '[samples]':
+            samples = read_samples(Q)
+    return samples, WMap(qmap.iteritems()), WMap(pmap.iteritems())
+
+
+def sampled_derivations_from_file(input_file):
+    return read_sampled_derivations(open(input_file))

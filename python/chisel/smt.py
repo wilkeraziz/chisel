@@ -193,12 +193,12 @@ class Derivation(object):
     A weighted derivation sampled a number of times
     """
 
-    def __init__(self, tree, vector, count, log_ur, importance):
+    def __init__(self, tree, vector, count):  #, log_ur, importance):
         self.tree_ = tree
         self.vector_ = vector
         self.count_ = count
-        self.log_ur_ = log_ur
-        self.importance_ = importance
+        #self.log_ur_ = log_ur
+        #self.importance_ = importance
 
     @property
     def tree(self):
@@ -216,13 +216,13 @@ class Derivation(object):
     def n(self):
         return self.count_
 
-    @property
-    def log_ur(self):
-        return self.log_ur_
+    #@property
+    #def log_ur(self):
+    #    return self.log_ur_
 
-    @property
-    def importance(self):
-        return self.importance_
+    #@property
+    #def importance(self):
+    #    return self.importance_
 
     def __hash__(self):
         return hash(self.tree_)
@@ -234,7 +234,8 @@ class Derivation(object):
         return not (self == other)
 
     def __str__(self):
-        return '%s\t%s\t%s\t%s' % (self.count_, self.log_ur_, self.tree_, self.vector_)
+        return '%s\t%s\t%s' % (self.count_, self.tree_, self.vector_)
+        #return '%s\t%s\t%s\t%s' % (self.count_, self.log_ur_, self.tree_, self.vector_)
 
 
 class DerivationGroup(object):
@@ -280,11 +281,11 @@ class DerivationGroup(object):
         """
         return reduce(op, (d.count for d in self.derivations_))
 
-    def importance(self, op=ProbabilitySemiring.sum):
-        """
-        Returns the total importance (as importance is a normalised estimate which already incorporates the count of the derivation, we can simply sum)
-        """
-        return reduce(op, (d.importance for d in self.derivations_))
+    #def importance(self, op=ProbabilitySemiring.sum):
+    #    """
+    #    Returns the total importance (as importance is a normalised estimate which already incorporates the count of the derivation, we can simply sum)
+    #    """
+    #    return reduce(op, (d.importance for d in self.derivations_))
     
 
 def groupby(derivations, key):

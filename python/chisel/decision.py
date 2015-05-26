@@ -47,17 +47,17 @@ def pack_nbest(empdist, target, nbest=-1, reward=True):
                                solution=empdist.solution(i)) for k, i in enumerate(ranked))
 
 
-def make_decisions(job_desc, headers, options, q_wmap, p_wmap):
+def make_decisions(job_desc, headers, options):  #, q_wmap, p_wmap):
     # this code runs in a Pool, thus we wrap in try/except in order to have more informative exceptions
-    jid, block = job_desc
+    jid, path = job_desc
     try:
-        derivations = read_sampled_derivations(iter(block), headers)
+        derivations, q_wmap, p_wmap = read_sampled_derivations(open(path, 'r'))
         empdist = EmpiricalDistribution(derivations,
                                         q_wmap=q_wmap,
                                         p_wmap=p_wmap,
                                         get_yield=lambda d: d.tree.projection)
 
-        logging.info('%d unique strings', len(empdist))
+        logging.info('%d derivations and %d unique strings', len(derivations), len(empdist))
 
         solutions = {}
 
@@ -92,12 +92,12 @@ def create_decision_rule_dir(workspace, decision_rule, metric_name=None):
     return output_dir
 
 
-def decide_and_save(job_desc, headers, options, q_wmap, p_wmap, output_dirs):
+def decide_and_save(job_desc, headers, options, output_dirs):
     # this code runs in a Pool, thus we wrap in try/except in order to have more informative exceptions
-    jid, block = job_desc
+    jid, path = job_desc
     try:
         # make decisions
-        decisions = make_decisions(job_desc, headers, options, q_wmap, p_wmap)
+        decisions = make_decisions(job_desc, headers, options)  #, q_wmap, p_wmap)
         # write to file if necessary
         for rule, ranking in decisions.iteritems():
             with open('{0}/{1}'.format(output_dirs[rule], jid), 'w') as out:
@@ -120,12 +120,12 @@ def argparse_and_config():
     parser.add_argument("workspace",
                         type=str, default=None,
                         help="where samples can be found and where decisions are placed")
-    parser.add_argument("--target-scaling",
-                        type=float, default=1.0,
-                        help="scaling parameter for the target model (default: 1.0)")
-    parser.add_argument("--proxy-scaling",
-                        type=float, default=1.0,
-                        help="scaling parameter for the proxy model (default: 1.0)")
+#    parser.add_argument("--target-scaling",
+#                        type=float, default=1.0,
+#                        help="scaling parameter for the target model (default: 1.0)")
+#    parser.add_argument("--proxy-scaling",
+#                        type=float, default=1.0,
+#                        help="scaling parameter for the proxy model (default: 1.0)")
     parser.add_argument("--map",
                         action='store_true',
                         help="MAP decoding")
@@ -164,15 +164,15 @@ def main():
     options, config = argparse_and_config()
 
     # parameters of the instrumental distribution
-    proxy_weights = scaled_fmap(section_literal_eval(config.items('proxy')), options.proxy_scaling)
-    proxy_wmap = WMap(proxy_weights.iteritems())
+#    proxy_weights = scaled_fmap(section_literal_eval(config.items('proxy')), options.proxy_scaling)
+#    proxy_wmap = WMap(proxy_weights.iteritems())
     #logging.debug('proxy (scaling=%f): %s', options.proxy_scaling, dict2str(proxy_weights, sort=True))
-    logging.debug('proxy (scaling=%f): %s', options.proxy_scaling, str(proxy_wmap))
+#    logging.debug('proxy (scaling=%f): %s', options.proxy_scaling, str(proxy_wmap))
 
     # parameters of the target distribution
-    target_weights = scaled_fmap(section_literal_eval(config.items('target')), options.target_scaling)
-    target_wmap = WMap(target_weights.iteritems())
-    logging.debug('target (scaling=%f): %s', options.target_scaling, str(target_wmap))
+#    target_weights = scaled_fmap(section_literal_eval(config.items('target')), options.target_scaling)
+#    target_wmap = WMap(target_weights.iteritems())
+#    logging.debug('target (scaling=%f): %s', options.target_scaling, str(target_wmap))
 
     # loads mteval modules
     if config.has_section('chisel:metrics'):
@@ -228,7 +228,7 @@ def main():
 
     # read jobs from workspace
     input_files = list_numbered_files(samples_dir)
-    jobs = [(fid, read_block(open(input_file, 'r'))) for fid, input_file in input_files]
+    jobs = [(fid, input_file) for fid, input_file in input_files]
     logging.info('%d jobs', len(jobs))
 
     """
@@ -249,8 +249,8 @@ def main():
     results = pool.map(partial(decide_and_save,
                                headers=headers,
                                options=options,
-                               q_wmap=proxy_wmap,
-                               p_wmap=target_wmap,
+                               #q_wmap=proxy_wmap,
+                               #p_wmap=target_wmap,
                                output_dirs=output_dirs),
                        jobs)
     # save the 1-best solution for each decision rule in a separate file

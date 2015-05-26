@@ -21,6 +21,7 @@ from util.io import SegmentMetaData
 import traceback
 import itertools
 from smt import SVector, Tree, Derivation
+from instrumental import Sampler, KLOptimiser
 
 
 class RawImportanceSample(object):
@@ -504,56 +505,54 @@ def main():
     columns ='n importance log_up log_uq log_ur d v'.split()
     #columns = ('n', 'r', 'p', 'q', 'd', 'v')
 
-    # testing something here
-    if True:
-        from instrumental import Sampler, KLOptimiser
-        for seg in segments:
-            
-            sampler = Sampler(seg, proxy_weights, target_weights, cdec_cfg_string)
 
-            if options.tune:  # perhaps we tune Q by optimising KL(q||p)
-                optimiser = KLOptimiser(seg, 
-                        options.tuning_samples, 
-                        proxy_weights, 
-                        target_weights, 
-                        cdec_cfg_string, 
-                        avgcoeff=1.0)
-                optq = optimiser.optimise()  # optimise the proxy
-                sampler.reweight(optq)  # reweight the forest
-            
-            # samples
-            samples = sampler.sample(options.samples)
-            sampler.save(samples, output_dir, '.optimised' if options.tune else '.normal')
-            #TODO: update chisel.decision to deal with the clearner format (and with the tuned parameters)
-            #TODO: update chisel.tuning if necessary
+    # TODO run this in parallel
+    for seg in segments:
+        
+        sampler = Sampler(seg, proxy_weights, target_weights, cdec_cfg_string)
+
+        if options.tune:  # perhaps we tune Q by optimising KL(q||p)
+            optimiser = KLOptimiser(seg, 
+                    options.tuning_samples, 
+                    proxy_weights, 
+                    target_weights, 
+                    cdec_cfg_string, 
+                    avgcoeff=1.0)
+            optq = optimiser.optimise()  # optimise the proxy
+            sampler.reweight(optq)  # reweight the forest
+        
+        # samples
+        samples = sampler.sample(options.samples)
+        sampler.save(samples, output_dir)
+        #TODO: update chisel.decision to deal with the clearner format (and with the tuned parameters)
+        #TODO: update chisel.tuning if necessary
 
 
-            #result = Result(seg, samples, options.resampling)
-            #write_to_file(result, output_dir, columns, options.sortby)
+        #result = Result(seg, samples, options.resampling)
+        #write_to_file(result, output_dir, columns, options.sortby)
 
-        sys.exit(0)
     # done
 
+    if False:  # TODO clean this up
+        pool = Pool(options.jobs)
+        # distribute jobs
+        feedback = pool.map(partial(sample_and_save,
+                                   output_dir,
+                                   columns,
+                                   options.sortby,
+                                   n_samples=options.samples,
+                                   resample=options.resampling, 
+                                   proxy_weights=proxy_weights,
+                                   target_weights=target_weights,
+                                   cdec_config_str=cdec_cfg_string),
+                           segments)
 
-    pool = Pool(options.jobs)
-    # distribute jobs
-    feedback = pool.map(partial(sample_and_save,
-                               output_dir,
-                               columns,
-                               options.sortby,
-                               n_samples=options.samples,
-                               resample=options.resampling, 
-                               proxy_weights=proxy_weights,
-                               target_weights=target_weights,
-                               cdec_config_str=cdec_cfg_string),
-                       segments)
-
-    # summary of samples
-    try:
-        from tabulate import tabulate
-        print tabulate(feedback, headers=('job', 'samples', 'derivations', 'strings', 'Zp/Zq', 'Ne'), tablefmt='pipe')
-    except ImportError:
-        logging.info('Consider installing tabulate for some nice summaries')
+        # summary of samples
+        try:
+            from tabulate import tabulate
+            print tabulate(feedback, headers=('job', 'samples', 'derivations', 'strings', 'Zp/Zq', 'Ne'), tablefmt='pipe')
+        except ImportError:
+            logging.info('Consider installing tabulate for some nice summaries')
 
 
 if __name__ == '__main__':
