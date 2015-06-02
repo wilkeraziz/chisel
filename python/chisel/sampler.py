@@ -385,8 +385,25 @@ def sample_and_save(odir, columns, sortby, *args, **kwargs):
         raise Exception(''.join(traceback.format_exception(*sys.exc_info())))
 
 
+def new_sampler(seg, proxy_weights, target_weights, cdec_cfg_str, output_dir, options):
+    try:
+        sampler = Sampler(seg, proxy_weights, target_weights, cdec_cfg_str)
 
-
+        if options.tune:  # perhaps we tune Q by optimising KL(q||p)
+            optimiser = KLOptimiser(seg, 
+                    options.tuning_samples, 
+                    proxy_weights, 
+                    target_weights, 
+                    cdec_cfg_str, 
+                    avgcoeff=1.0)
+            optq = optimiser.optimise()  # optimise the proxy
+            sampler.reweight(optq)  # reweight the forest
+        # samples
+        samples = sampler.sample(options.samples)
+        sampler.save(samples, output_dir)
+    except:
+        raise Exception('job={0} exception={1}'.format(seg.id,
+                                                       ''.join(traceback.format_exception(*sys.exc_info()))))
 
 def argparse_and_config():
     parser = argparse.ArgumentParser(description='MC sampler for hiero models',
@@ -506,30 +523,24 @@ def main():
     #columns = ('n', 'r', 'p', 'q', 'd', 'v')
 
 
-    # TODO run this in parallel
-    for seg in segments:
-        
-        sampler = Sampler(seg, proxy_weights, target_weights, cdec_cfg_string)
-
-        if options.tune:  # perhaps we tune Q by optimising KL(q||p)
-            optimiser = KLOptimiser(seg, 
-                    options.tuning_samples, 
-                    proxy_weights, 
-                    target_weights, 
-                    cdec_cfg_string, 
-                    avgcoeff=1.0)
-            optq = optimiser.optimise()  # optimise the proxy
-            sampler.reweight(optq)  # reweight the forest
-        
-        # samples
-        samples = sampler.sample(options.samples)
-        sampler.save(samples, output_dir)
-        #TODO: update chisel.decision to deal with the clearner format (and with the tuned parameters)
-        #TODO: update chisel.tuning if necessary
-
-
-        #result = Result(seg, samples, options.resampling)
-        #write_to_file(result, output_dir, columns, options.sortby)
+    if options.jobs > 1: 
+        pool = Pool(options.jobs)
+        feedback = pool.map(partial(new_sampler,
+                                   proxy_weights=proxy_weights,
+                                   target_weights=target_weights,
+                                   cdec_cfg_str=cdec_cfg_string,
+                                   output_dir=output_dir,
+                                   options=options),
+                           segments)
+    else:
+        for seg in segments:
+            new_sampler(seg, 
+                    proxy_weights=proxy_weights,
+                    target_weights=target_weights,
+                    cdec_cfg_str=cdec_cfg_string,
+                    output_dir=output_dir,
+                    options=options)
+            
 
     # done
 
