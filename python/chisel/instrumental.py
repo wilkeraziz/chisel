@@ -8,13 +8,14 @@ import math
 import os
 import numpy as np
 import traceback
-from itertools import chain
+from itertools import chain, groupby
 from collections import namedtuple, Counter, defaultdict
 from time import time
 from multiprocessing import Pool
 from functools import partial
 from ConfigParser import RawConfigParser
 from scipy.optimize import minimize, basinhopping
+
 
 import ff
 import cdeclib
@@ -26,6 +27,7 @@ from smt import SVector, Tree, Derivation
 from util.logtools import timethis
 from tabulate import tabulate
 from scipy import linalg as LA
+from chisel.util import obj2id
 
 
 class Sampler(object):
@@ -117,7 +119,121 @@ class Sampler(object):
                 print >> fo, '{0}\t{1}\t{2}'.format(sample.count, sample.projection, sample.vector)
 
 
-class KLEstimates(object):
+class KLYEstimates(object):
+    """
+    """
+
+    def __init__(self,
+            derivations,
+            q_wmap,  # q_features
+            p_wmap,  # p_features
+            active_features,
+            empirical_q=True,
+            normalise_p=False,
+            stderr=None):
+        """
+        :param derivations: list of samples (Sampler.Sample)
+        :param q_wmap: a dict-like object representing the non-zero parameters of the proxy distribution
+        :param q_wmap: a dict-like object representing the non-zero parameters of the target distribution
+        :param active_features: the (already ordered) list of active features
+        :param empirical_q: if true, q(d) is estimated as n(d)/N (using the count alone),
+            if false, q(d) is estimated as n(d)uq(d)/\sum {n(d')uq(d')} (using the current dot product to smooth the counts -- remember that uq(d) = exp(lambda * g(d)))
+        :param normalise_p: if true, we estimate KL(q||p) where p(d) is estimated (via importance sampling),
+            if false, we estimate KL(q||up) = KL(q||p) - log Zp
+        """
+
+        # group derivations by yield
+        y2i = defaultdict()
+        yields = []
+        for projection, Dy in groupby(derivations, key=lambda d: d.projection):
+            obj2id(projection, y2i)
+            yields.append(projection)
+
+        # support of strings
+        Y = np.arange(len(y2i))
+        # map derivation id to yield id
+        d2y = np.array([y2i[d.projection] for d in derivations], int)
+
+        # these are the indices of the derivations projecting onto a certain string y
+        y2D = [[] for _ in xrange(len(Y))]
+        for d, y in enumerate(d2y):
+            y2D[y].append(d)
+        # helper function which selects statistics (from a given array) associated with derivations for which gamma_y(d) == 1 for a given y
+        select = lambda array, y: array[y2D[y]]
+
+        # 1) dot products
+        gd = np.array([fmap_dot(d.vector, q_wmap) for d in derivations])
+        fd = np.array([fmap_dot(d.vector, p_wmap) for d in derivations])
+        hd = fd - gd
+
+        # 2) q(y) \propto \sum_{d \in D_y} n(d)
+        nd = np.array([d.count for d in derivations], float)  # derivation counts (from Q)
+        Zq = nd.sum(0)
+        qd = nd / Zq
+        log_qd = np.log(qd)
+        ny = np.array([select(nd, y).sum() for y in Y])  # string counts (from Q)
+        qy = ny / Zq
+        log_qy = np.log(qy)
+
+        # 3) r(d) \propto exp(h(d)) * n(d)
+        log_urd = hd + np.log(nd)
+        log_rd = log_urd - np.logaddexp.reduce(log_urd)
+        rd = np.exp(log_rd)
+
+        # 4) p(y) = \sum_{d \in D_y} r(d)
+        log_py = np.array([np.logaddexp.reduce(select(log_rd, y)) for y in Y])
+        py = np.exp(log_py)
+
+        # 5) expected feature vector
+        gvecs = np.array([d.vector.as_array(active_features) for d in derivations])
+        posteriors = (gvecs.transpose() * qd).transpose()
+        expected_g = posteriors.sum(0)
+
+        # 6) KL(q(y)||p(y)) = <log(q(y)/p(y))>_q(y)
+        KL = (qy * (log_qy - log_py)).sum()
+
+        # 7) derivative of KL wrt the parameters of q
+        dKL = (((gvecs - expected_g).transpose() * qd) * (log_qd - fd + 1)).transpose().sum(0)
+
+        if stderr is not None:
+            str_yields = np.array([y.decode('ascii', 'ignore') for y in yields])
+            print >> stderr, tabulate(np.column_stack((qy, py, str_yields)), headers=['q(y)', 'p(y)', 'yield'])
+
+        # 9) store data
+        self.KL_ = KL
+        self.dKL_ = dKL
+
+        # 10) effective count
+
+        log_urd2 = log_urd * 2  # r(d)^2
+        log_rd2 = log_urd2 - np.logaddexp.reduce(log_urd2)
+        rd2 = np.exp(log_rd2)
+        mean_r = rd.mean()
+        mean_sr = np.exp(log_rd * 2).mean()
+        ne = rd.size * mean_r * mean_r / mean_sr
+        self.ne_ = ne
+        self.dne_ = ((gvecs.transpose() * (rd2 - rd)) * 2 * ne).transpose().sum(0)
+
+
+    @property
+    def KL(self):
+        return self.KL_
+
+    @property
+    def dKL(self):
+        return self.dKL_
+
+    @property
+    def ne(self):
+        return self.ne_
+
+    @property
+    def dne(self):
+        return self.dne_
+
+
+
+class KLDEstimates(object):
     """
     """
 
@@ -139,7 +255,7 @@ class KLEstimates(object):
         :param normalise_p: if true, we estimate KL(q||p) where p(d) is estimated (via importance sampling),
             if false, we estimate KL(q||up) = KL(q||p) - log Zp
         """
-        
+
         # 1) dot products
         q_dot = np.array([fmap_dot(d.vector, q_wmap) for d in derivations])
         p_dot = np.array([fmap_dot(d.vector, p_wmap) for d in derivations])
@@ -162,9 +278,6 @@ class KLEstimates(object):
         log_urd = np.log(nd) + r_dot
         log_rd = log_urd - np.logaddexp.reduce(log_urd)
         rd = np.exp(log_rd)
-        mean_r = rd.mean()
-        mean_sr = np.exp(log_rd * 2).mean()
-        ne = rd.size * mean_r * mean_r / mean_sr
 
         # 5) expected feature vectors 
         gd = np.array([d.vector.as_array(active_features) for d in derivations])
@@ -195,7 +308,18 @@ class KLEstimates(object):
         self.rd_ = rd
         self.KL_ = KL
         self.dKL_ = dKLdl
+
+
+        # 10) effective count
+
+        log_urd2 = log_urd * 2  # r(d)^2
+        log_rd2 = log_urd2 - np.logaddexp.reduce(log_urd2)
+        rd2 = np.exp(log_rd2)
+        mean_r = rd.mean()
+        mean_sr = np.exp(log_rd * 2).mean()
+        ne = rd.size * mean_r * mean_r / mean_sr
         self.ne_ = ne
+        self.dne_ = ((gd.transpose() * (rd2 - rd)) * 2 * ne).transpose().sum(0)
 
     @property
     def KL(self):
@@ -209,9 +333,13 @@ class KLEstimates(object):
     def ne(self):
         return self.ne_
 
+    @property
+    def dne(self):
+        return self.ne_
+
 class KLOptimiser(object):
         
-    DivergenceReturn = namedtuple('DivergenceReturn', 'KL dKL ne')
+    DivergenceReturn = namedtuple('DivergenceReturn', 'KL dKL ne dne')
     NoRegularisation = None
     L1Regulariser = lambda w: LA.norm(w, 1)
     L2Regulariser = lambda w: LA.norm(w, 2)
@@ -222,8 +350,9 @@ class KLOptimiser(object):
             qmap, 
             pmap, 
             cdec_config_str, 
-            regulariser=NoRegularisation, #L1Regulariser, #NoRegularisation, 
-            regulariser_weight=0.0,
+            regulariser='', #L1Regulariser, #NoRegularisation,
+            regulariser_weight=1.0,
+            ne_weight=0.0,
             avgcoeff=1.0):
 
         if not (0 < avgcoeff <= 1.0):
@@ -237,7 +366,13 @@ class KLOptimiser(object):
         logging.info('%d features', len(self.features_))
         self.f2i_ = defaultdict(None, ((f,i) for i, f in enumerate(self.features_)))
         self.regulariser_weight_ = regulariser_weight
-        self.regulariser_ = regulariser
+        if regulariser.lower() == 'l1':
+            self.regulariser_ = 1
+        elif regulariser.lower() == 'l2':
+            self.regulariser_ = 2
+        else:
+            self.regulariser_ = 0
+        self.ne_weight_ = ne_weight
         logging.info('Q: %s', qmap)
         logging.info('P: %s', pmap)
         self.avgcoeff_ = avgcoeff
@@ -292,14 +427,14 @@ class KLOptimiser(object):
         # compute KL estimates
         # TODO: implement moving average of estimates
         # TODO: fix lambda (the part that is common between q and p)
-        empdist = KLEstimates(samples,
+        empdist = KLDEstimates(samples,
                 q_wmap=qmap,
                 p_wmap=pmap,
                 active_features=self.features_,
                 empirical_q=False,
                 normalise_p=False,
                 stderr=sys.stderr)
-        return KLOptimiser.DivergenceReturn(empdist.KL, empdist.dKL, empdist.ne)
+        return KLOptimiser.DivergenceReturn(empdist.KL, empdist.dKL, empdist.ne, empdist.dne)
 
     def optimise(self):
         """optimises the proxy for min KL(q||p)"""
@@ -315,7 +450,7 @@ class KLOptimiser(object):
             # samples from the proxy
             sample = self.sample(qmap)
             # estimate KL(q||p) and its derivatives wrt lambda 
-            obj, jac, ne = self.estimates(sample, qmap, self.pmap_)
+            obj, jac, ne, dne = self.estimates(sample, qmap, self.pmap_)
             logging.info('[%d/%d/%d] KL=%s ne=%f', self.step, self.iteration, self.funcall, obj, ne)
             # regularisation
             if self.regulariser_ is not KLOptimiser.NoRegularisation:
@@ -325,13 +460,51 @@ class KLOptimiser(object):
                 logging.info('[%d/%d/%d] Regularised KL=%s', self.step, self.iteration, self.funcall, obj)
             self.funcall += 1
             return obj, jac
+
+        def f2(w):
+            # converts the dense np weight vector into a sparse dict
+            qmap = self.nparray2dict(w)
+            logging.info('[%d/%d/%d] nonzero weights: %d', self.step, self.iteration, self.funcall, len(qmap))
+            # samples from the proxy
+            sample = self.sample(qmap)
+            # estimate KL(q||p) and its derivatives wrt lambda
+            kl, dkl, ne, dne = self.estimates(sample, qmap, self.pmap_)
+            logging.info('[%d/%d/%d] KL=%s ne=%f', self.step, self.iteration, self.funcall, kl, ne)
+            obj = -ne
+            jac = -dne
+            self.funcall += 1
+            return obj, jac
+
+        def f3(w):
+            # converts the dense np weight vector into a sparse dict
+            qmap = self.nparray2dict(w)
+            logging.info('[%d/%d/%d] nonzero weights: %d', self.step, self.iteration, self.funcall, len(qmap))
+            # samples from the proxy
+            sample = self.sample(qmap)
+            # estimate KL(q||p) and its derivatives wrt lambda
+            kl, dkl, ne, dne = self.estimates(sample, qmap, self.pmap_)
+            logging.info('[%d/%d/%d] KL=%s ne=%f', self.step, self.iteration, self.funcall, kl, ne)
+            obj = kl
+            jac = dkl
+
+            if self.ne_weight_ != 0.0:
+                obj -= self.ne_weight_ * ne
+                jac -= self.ne_weight_ * dne
+
+            if self.regulariser_ > 0 and self.regulariser_weight_ != 0.0:
+                obj += self.regulariser_weight_ * LA.norm(w, self.regulariser_)
+                jac += 2 * self.regulariser_weight_ * w
+
+            logging.info('[%d/%d/%d] Regularised KL=%s', self.step, self.iteration, self.funcall, obj)
+            self.funcall += 1
+            return obj, jac
             
         def callback(w):
             logging.info('New lambdas: %s', w)
             self.iteration += 1
 
-        def gcallback(w, f, a):
-            logging.info('New local minimum: %s', f)
+        def gcallback(w, fvalue, a):
+            logging.info('New local minimum: %s', fvalue)
             self.step += 1
         
         logging.info('Optimising KL(q||p)')
@@ -349,7 +522,7 @@ class KLOptimiser(object):
                 'callback': callback,
                 'options': {'maxiter': 5, 'maxfun': 10, 'ftol': 1e-6, 'gtol': 1e-6, 'disp': False}
                 }
-        result = basinhopping(f,
+        result = basinhopping(f3,
                 self.dict2nparray(self.qmap0_),  # initial weights
                 minimizer_kwargs=minimiser_args,
                 niter=3,
@@ -360,7 +533,7 @@ class KLOptimiser(object):
         qmap = self.nparray2dict(result.x)
         logging.info('Final KL: %s', result.fun)
         logging.info('Nonzero weights: %d', len(qmap))
-        logging.info('Final lambda: %s', fpairs2str(qmap.iteritems()))
+        #logging.info('Final lambda: %s', fpairs2str(qmap.iteritems()))
 
 
         return qmap 

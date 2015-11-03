@@ -100,7 +100,7 @@ class SegmentMetaData(object):
             args['sid'] = sid
         # overrides grammar
         if grammar_dir is not None:
-            args['grammar'] = '{0}/grammar.{1}.gz'.format(grammar_dir, sid)
+            args['grammar'] = '{0}/grammar.{1}.gz'.format(grammar_dir, args['sid'])
         # sanity checks
         if not isfile(args['grammar']):
             raise Exception('Grammar file not found: %s' % args['grammar'])
@@ -120,7 +120,7 @@ def parse_cdec_sgml(sgml_str):
         raise Exception('Bad sgml: %s' % parts[0])
     groups = match.groups()
     return {'grammar': groups[0],
-            'sid': groups[1],
+            'sid': int(groups[1]),
             'src': Yield(groups[2]),
             'refs': [Yield(ref.strip()) for ref in parts[1:]]}
 

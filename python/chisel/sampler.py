@@ -1,5 +1,5 @@
 """
-@author waziz
+:Authors: - Wilker Aziz
 """
 import collections
 import logging
@@ -36,24 +36,31 @@ def argparse_and_config():
                         help='samples will be written to $workspace/samples/$i')
     parser.add_argument("--target-scaling",
                         type=float, default=1.0,
-                        help="scaling parameter for the target model (default: 1.0)")
+                        help="scaling parameter for the target model")
     parser.add_argument("--proxy-scaling",
                         type=float, default=1.0,
-                        help="scaling parameter for the proxy model (default: 1.0)")
+                        help="scaling parameter for the proxy model")
+    parser.add_argument("--avgcoeff",
+                        type=float, default=1.0,
+                        help="recency coefficient for the moving average in KL optimisation")
+    parser.add_argument("--klreg",
+                        type=str, default='none', choices=['none', 'L1', 'L2'],
+                        help="regulariser for KL optimisation")
+    parser.add_argument("--klregw",
+                        type=float, default=0.0,
+                        help="regulariser's weight for KL optimisation")
+    parser.add_argument("--klnew",
+                        type=float, default=0.0,
+                        help="weight of an additional regulariser based on the effective sample size")
     parser.add_argument("--samples",
                         type=int, default=100,
-                        help="number of samples (default: 100)")
+                        help="number of samples")
     parser.add_argument("--tuning-samples",
                         type=int, default=100,
-                        help="number of samples when tuning the proxy (default: 100)")
+                        help="number of samples when tuning the proxy")
     parser.add_argument("--resampling",
                         action='store_true',
                         help="resample the importance weights")
-    parser.add_argument("--input-format",
-                        type=str, default='cdec',
-                        choices=['plain', 'cdec'],
-                        help="'plain': one input sentence per line and requires --grammars; "
-                             "'cdec': one input sentence per line plus a grammar path (sgml-formatted)")
     parser.add_argument("--grammars",
                         type=str,
                         help="where to find grammars (grammar files are expected to be named grammar.$i.sgm, "
@@ -78,11 +85,6 @@ def argparse_and_config():
                                      configure_logging=True)
     logging.debug('arguments: %s', vars(args))
 
-    # additional sanity checks: input format
-    if args.input_format == 'plain' and args.grammars is None:
-        logging.error("'--input-format plain' requires '--grammars <path>'")
-        failed = True
-
     if failed:
         sys.exit(1)
 
@@ -97,8 +99,11 @@ def sample_and_save(seg, proxy_weights, target_weights, cdec_cfg_str, output_dir
                     options.tuning_samples, 
                     proxy_weights, 
                     target_weights, 
-                    cdec_cfg_str, 
-                    avgcoeff=1.0)
+                    cdec_cfg_str,
+                    regulariser=options.klreg,
+                    regulariser_weight=options.klregw,
+                    ne_weight=options.klnew,
+                    avgcoeff=options.avgcoeff)
             optq = optimiser.optimise()  # optimise the proxy
             sampler.reweight(optq)  # reweight the forest
         # samples
@@ -152,10 +157,9 @@ def main():
 
     # reads segments from input
     segments = [SegmentMetaData.parse(line.strip(),
-                                      options.input_format,
-                                      sid=sid,
+                                      'cdec',
                                       grammar_dir=options.grammars)
-                for sid, line in enumerate(sys.stdin)]  # easy to check variance (just need to multiply this by a number of trials) 
+                for line in sys.stdin]  
 
     # sample and save results
     logging.info('Distributing %d segments to %d jobs', len(segments), options.jobs)

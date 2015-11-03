@@ -33,18 +33,20 @@ class EmpiricalDistribution(object):
         # assign sequential ids to yields
         y2i = defaultdict()
         [obj2id(Dy.projection, y2i) for Dy in support]
+
         # support of derivations
         D = np.arange(len(derivations))
         # support of strings
         Y = np.arange(len(y2i))
         # map derivation id to yield id
         d2y = np.array([y2i[get_yield(d)] for d in derivations], int)
-        # matrix which reproduces the indicator function \gamma_y(d)
-        gamma = np.zeros((len(D), len(Y)), int)
-        for i, y in enumerate(d2y):
-            gamma[i,y] = 1
+        
+        # these are the indices of the derivations projecting onto a certain string y
+        y2D = [[] for _ in xrange(len(Y))]
+        for d, y in enumerate(d2y):
+            y2D[y].append(d)
         # helper function which selects statistics (from a given array) associated with derivations for which gamma_y(d) == 1 for a given y
-        select = lambda array, y: array[gamma[:,y].nonzero()[0]]
+        select = lambda array, y: array[y2D[y]]
 
         # 1) dot products
         q_dot = np.array([fmap_dot(d.vector, q_wmap) for d in derivations])

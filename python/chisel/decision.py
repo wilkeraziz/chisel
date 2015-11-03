@@ -52,29 +52,34 @@ def make_decisions(job_desc, headers, options):  #, q_wmap, p_wmap):
     jid, path = job_desc
     try:
         derivations, q_wmap, p_wmap = read_sampled_derivations(open(path, 'r'))
+        logging.debug('job=%d derivations=%d empdist...', jid, len(derivations))
         empdist = EmpiricalDistribution(derivations,
                                         q_wmap=q_wmap,
                                         p_wmap=p_wmap,
                                         get_yield=lambda d: d.tree.projection)
 
-        logging.info('%d derivations and %d unique strings', len(derivations), len(empdist))
-
         solutions = {}
 
         if options.map:
             # print 'MAP:'
+            logging.debug('job=%s MAP...', jid)
             posterior = MAP(empdist, normalise=True)
             solutions['MAP'] = pack_nbest(empdist, posterior, options.nbest, reward=True)
 
         if options.mbr or options.consensus:
+            logging.debug('job=%s mteval...', jid)
             mteval.prepare_decoding(None, empdist, empdist)
             if options.mbr:
+                logging.debug('job=%s MBR...', jid)
                 eb_gains = MBR(empdist, options.metric, normalise=True)
                 solutions['MBR'] = pack_nbest(empdist, eb_gains, options.nbest, reward=False)
 
             if options.consensus:
+                logging.debug('job=%s consensus...', jid)
                 co_gains = consensus(empdist, options.metric, normalise=True)
                 solutions['consensus'] = pack_nbest(empdist, co_gains, options.nbest, reward=False)
+        
+        logging.info('job=%d derivations=%d strings=%d', jid, len(derivations), len(empdist))
 
         return solutions
 

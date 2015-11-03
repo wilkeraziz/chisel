@@ -64,7 +64,7 @@ class Driver(object):
         self.wmap = Driver._START_MODEL_(self.config, default=self.args.default)
         self.workspace = Driver._MAKE_WORKSPACE_(self.args.workspace, 'SGD', self.args.metric, self.args.alias)
         self.base_config = Driver._BASE_CONFIG_(self.config, self.workspace, self.wmap.proxy, self.wmap.target)
-        self.devset = Driver._PREPARE_DEVSET_(self.workspace, self.args.dev, 'dev')
+        self.devset = Driver._PREPARE_DEVSET_(self.workspace, self.args.dev, config, 'dev')
         Driver._LOAD_METRIC_(self.config, self.args.metric)
 
         self.iteration = 0
@@ -397,13 +397,18 @@ class Driver(object):
         return '{0}/base_config.ini'.format(workspace)
 
     @staticmethod
-    def _PREPARE_DEVSET_(workspace, path, stem='dev', input_format='cdec'):
+    def _PREPARE_DEVSET_(workspace, path, config, stem='dev', input_format='cdec'):
         # load dev set and separate input and references
         logging.info('Reading dev set: %s', path)
+        grammar_dir = None
+        if config.has_section('chisel:sampler'):
+            sampler_map = section_literal_eval(config.items('chisel:sampler'))
+            grammar_dir = sampler_map.get('grammars', None)
         with open(path, 'r') as f:
             devset = [SegmentMetaData.parse(line.strip(),
                                               input_format,
-                                              sid=sid)
+                                              sid=sid,
+                                              grammar_dir=grammar_dir)
                         for sid, line in enumerate(f)]
         logging.info('%d training instances', len(devset))
 

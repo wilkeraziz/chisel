@@ -1,12 +1,12 @@
 """
 
-@author waziz
+:Authors: - Wilker Aziz
 """
 
 import argparse
 import logging
 import sys
-from learning.driver import Driver
+from learning.newdriver import Driver
 from util.config import section_literal_eval, configure
 
 
@@ -24,15 +24,25 @@ def argparse_and_config():
                         help="where samples can be found and where decisions are placed")
     parser.add_argument("dev", type=str,
                         help="development set")
+    parser.add_argument("--skip", type=int, default=0,
+                        help="Skip the first n iterations")
+    parser.add_argument("--maxiter", '-M', type=int, default=10,
+                        help="Maximum number of iterations")
     parser.add_argument("--metric", type=str, default='bleu',
                         help="similarity function")
     parser.add_argument('--samples', type=int, default=1000,
                         help='number of samples')
     parser.add_argument('--nbest', type=int, default=-1,
                         help='this has no practical use other than perhaps debugging')
+    parser.add_argument("--riskreg", type=float, default=0.0,
+                        help="Risk regulariser")
+    parser.add_argument("--klreg", type=float, default=0.0,
+                        help="KL regulariser")
     parser.add_argument("--jobs", type=int, default=2, help="number of processes")
     parser.add_argument("--devtest", type=str,
                         help="devtest set")
+    parser.add_argument("--devtest-grammar", type=str,
+                        help="grammars for the devtest set")
     parser.add_argument("--alias", type=str,
                         help="an alias for the experiment")
     parser.add_argument('--default', type=float, 
@@ -40,6 +50,9 @@ def argparse_and_config():
     parser.add_argument('--consensus',
                         action='store_true',
                         help='consensus training instead of MBR training')
+    parser.add_argument('--scoring-tool', type=str,
+            default='/Users/waziz/workspace/github/cdec/mteval/fast_score',
+            help='a scoring tool such as fast_score')
     parser.add_argument('--verbose', '-v',
                         action='store_true',
                         help='increase the verbosity level')

@@ -192,13 +192,12 @@ class BLEU(object):
     def ibm_smoothing(cc, tc):
         pn = np.zeros(len(cc), float)
         k = 0
-        # TODO filter c != 0
         for i, (c, t) in enumerate(zip(cc, tc)):
-            if c > 0:
-                pn[i] = c / t
-            else:
+            p = c / t
+            if p == 0:  # originally we would test whether c == 0, however it may happen that c > 0 (and extremelly small) and c/t is virtually zero
                 k += 1
-                pn[i] = 1.0 / math.pow(2, k)
+                p = 1.0 / math.pow(2, k)
+            pn[i] = p
         return pn
 
     @staticmethod

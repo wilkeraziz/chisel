@@ -36,7 +36,7 @@ def save_estimates(sid, empdist, losses, posterior, risk, dR, stems):
 def risk(seg, samples_file, q_wmap, p_wmap, metric, sample_headers, consensus=False, save_to=None):
     # TODO: log information in file $workspace/estimates/$seg
     # this code runs in a Pool, thus we wrap in try/except in order to have more informative exceptions
-    derivations = sampled_derivations_from_file(samples_file, sample_headers)
+    derivations, _qmap, _pmap = sampled_derivations_from_file(samples_file) #, sample_headers)
     empdist = EmpiricalDistribution(derivations,
                                     q_wmap=q_wmap,
                                     p_wmap=p_wmap,
@@ -61,7 +61,7 @@ def risk(seg, samples_file, q_wmap, p_wmap, metric, sample_headers, consensus=Fa
 
 
 def divergence(seg, samples_file, q_wmap, p_wmap, sample_headers, save_to=None):
-    derivations = sampled_derivations_from_file(samples_file, sample_headers)
+    derivations, _qmap, _pmap = sampled_derivations_from_file(samples_file)  #, sample_headers)
     empdist = EmpiricalDistribution(derivations,
                                     q_wmap=q_wmap,
                                     p_wmap=p_wmap,
