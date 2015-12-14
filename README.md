@@ -54,7 +54,7 @@ We are still preparing our paper, so please be kind and wait a bit ;)
 
 ## Development
 
-`chisel` is developed by Wilker Aziz at the University of Sheffield.
+`chisel` is developed by Wilker Aziz at the University of Amsterdam.
 
 ## License
 
