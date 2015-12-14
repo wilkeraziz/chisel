@@ -16,7 +16,7 @@ class EmpiricalDistribution(object):
             derivations, 
             q_wmap,  # q_features
             p_wmap,  # p_features
-            get_yield,
+            get_yield=lambda d: d.tree.projection,
             empirical_q=True
             ):
         """
@@ -70,7 +70,7 @@ class EmpiricalDistribution(object):
             qy = np.array([select(qd, y).sum() for y in Y])
        
         # 4) importance weight: r(d) = ur(d)/Zr
-        log_urd = np.log(nd) + r_dot
+        log_urd = r_dot + np.log(nd)
         log_rd = log_urd - np.logaddexp.reduce(log_urd)
         rd = np.exp(log_rd)
 
@@ -86,16 +86,16 @@ class EmpiricalDistribution(object):
        
         # 7) expected feature vectors 
         fd = np.array([d.vector.as_array(p_wmap.features) for d in derivations])
-        fdpd = (fd.transpose() * rd).transpose()
-        fdpd_y = (fd.transpose() * rd_y).transpose() 
+        fdpd = fd * rd[:,np.newaxis]
+        fdpd_y = fd * rd_y[:,np.newaxis] 
         # <f(d)>_p
         p_expected_f = fdpd.sum(0)
         # <\gamma_y(d) f(d)>_p
         p_expected_f_y = np.array([select(fdpd_y, y).sum(0) for y in Y])
-        dpdt = ((p_expected_f_y - p_expected_f).transpose() * py).transpose()
+        dpdt = (p_expected_f_y - p_expected_f) * py[:,np.newaxis]
         
         gd = np.array([d.vector.as_array(q_wmap.features) for d in derivations])
-        gdqd = (gd.transpose() * qd).transpose()
+        gdqd = gd * qd[:,np.newaxis]
         # <g(d)>_q
         q_expected_g = gdqd.sum(0)
         
@@ -106,6 +106,21 @@ class EmpiricalDistribution(object):
         KL = (qd * (log_qd - log_rd)).sum()
         # dKL/dlambda = \sum_d q(d)(g(d) - <g(d)>_q)(log q(d) - log up(d) + 1)
         dKLdl = (((gd - q_expected_g).transpose() * qd) * (log_qd - log_rd + 1)).transpose().sum(0)
+
+        # Evidence lower bound
+        # = <log ~p(d)>_q - <log q(d)>_q
+        # = < theta * f(d) >_q - <log q(d)>_q
+        self.ELB_ = ((p_dot - log_qd) * qd).sum()
+        #dqdl = ((gd - q_expected_g).transpose() * qd).transpose()
+        dqdl = (gd - q_expected_g) * qd[:,np.newaxis]
+        #self.dELB_ = (dqdl.transpose() * (p_dot - log_qd - 1)).transpose().sum(0)
+        self.dELB_ = (dqdl * (p_dot - log_qd - 1)[:, np.newaxis]).sum(0)
+
+        # H(p)
+
+        # H(q)
+        #self.Hq_ = - (qd * log_qd).sum(0)
+        #self.dHq_ = - (((gd - q_expected_g).transpose() * qd) * log_qd).transpose().sum(0)
 
         # 9) store data
         self.support_ = support
@@ -167,6 +182,12 @@ class EmpiricalDistribution(object):
 
     def kl(self):
         return self.kl_, self.dkldl_
+    
+    def elb(self):
+        return self.ELB_, self.dELB_
+
+    #def Hq(self):
+    #    return self.Hq_, self.dHq_
 
     def __str__(self):
         strs = ['#p(y)\t#q(y)\t#y']

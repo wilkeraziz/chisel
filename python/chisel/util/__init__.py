@@ -10,7 +10,8 @@ def scaled_fmap(fmap, scaling=1.0):
 
 
 def fmap_dot(fmap, wmap):
-    return sum(fmap.get(fname, 0) * fweight for fname, fweight in wmap.iteritems())
+    return np.sum([fmap.get(fname, 0) * fweight for fname, fweight in wmap.iteritems()])
+    #return sum(fmap.get(fname, 0) * fweight for fname, fweight in wmap.iteritems())
 
 
 def str2fmap(line):

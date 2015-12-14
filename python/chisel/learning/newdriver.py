@@ -21,7 +21,9 @@ from chisel.util import scaled_fmap, npvec2str
 from chisel.util.io import SegmentMetaData, list_numbered_files
 from chisel.util.config import configure, section_literal_eval
 from divergence import KLDriver
+import newestimates as optalg
 from chisel.util.io import sampled_derivations_from_file
+from chisel.mteval.fast_bleu import TrainingBLEU
 
 from collections import namedtuple
 
@@ -243,28 +245,56 @@ class Driver(object):
                 derivations, _qmap, _pmap = sampled_derivations_from_file(input_file)
                 S.append(derivations)
             # compute loss
+            save_losses = False
             L = []
             loss_dir = '{0}/loss'.format(path_to_run)
             mkdir(loss_dir)
-            for i, derivations in enumerate(S):  # TODO: compute loss in parallel
+
+            logging.info('Running fast_bleu')
+            for i, derivations in enumerate(S):
                 seg = devset[i]
-                logging.debug(' assessing %s', seg.id)
                 projections = frozenset(d.tree.projection for d in derivations)
-                hyps = [MTEvalHyp(y, tuple(y.split())) for y in projections]
-                #hyps = [d.tree for d in derivations]
-                mteval.prepare_training(seg.src, seg.refs, hyps)
-                lmap = {hyp.projection: mteval.training_loss(c=h, metric=metric) for h, hyp in enumerate(hyps)}
-                #losses = np.array([mteval.training_loss(c=h, metric=metric) for h in range(len(hyps))], float)
+                scorer = TrainingBLEU(seg.refs)
+                lmap = {y: scorer.loss(y.split()) for y in projections}
                 L.append(lmap)
-                # saves losses
-                with open('{0}/{1}'.format(loss_dir, seg.id), 'w') as fo:
-                    for d in derivations:
-                        fo.write('{0}\n'.format(lmap[d.tree.projection]))
+                if save_losses:
+                    with open('{0}/{1}'.format(loss_dir, seg.id), 'w') as fo:
+                        for d in derivations:
+                            fo.write('{0} {1}\n'.format(lmap[d.tree.projection]))
+            logging.info('fast_bleu finished')
+
+            #############
+            if False:
+                logging.info('[%s] Computing loss against references', run.iteration)
+                for i, derivations in enumerate(S):  # TODO: compute loss in parallel
+                    seg = devset[i]
+                    logging.debug(' assessing %s', seg.id)
+                    projections = frozenset(d.tree.projection for d in derivations)
+                    hyps = [MTEvalHyp(y, tuple(y.split())) for y in projections]
+                    #hyps = [d.tree for d in derivations]
+                    mteval.prepare_training(seg.src, seg.refs, hyps)
+                    lmap = {hyp.projection: mteval.training_loss(c=h, metric=metric) for h, hyp in enumerate(hyps)}
+                    #losses = np.array([mteval.training_loss(c=h, metric=metric) for h in range(len(hyps))], float)
+                    L.append(lmap)
+                    # saves losses
+                    if save_losses:
+                        with open('{0}/{1}'.format(loss_dir, seg.id), 'w') as fo:
+                            for d in derivations:
+                                fo.write('{0} {1}\n'.format(lmap[d.tree.projection]))
+                logging.info('slow_bleu finished')
+            #################
+
             # tuning iteration
-            target_weights = self.optimise_target(run, devset, S, L)
-            self.wmap.target.update(target_weights)
-            proxy_weights = self.optimise_proxy(run, devset, S)
-            self.wmap.proxy.update(proxy_weights)
+            if self.args.order == 'pq':
+                target_weights = self.optimise_target(run, devset, S, L)
+                self.wmap.target.update(target_weights)
+                proxy_weights = self.optimise_proxy(run, devset, S)
+                self.wmap.proxy.update(proxy_weights)
+            else:
+                proxy_weights = self.optimise_proxy(run, devset, S)
+                self.wmap.proxy.update(proxy_weights)
+                target_weights = self.optimise_target(run, devset, S, L)
+                self.wmap.target.update(target_weights)
             # update the config that precedes this run
             self.update_config_file(run.iteration - 1)
             eval_score = self.mteval(run.iteration)
@@ -284,16 +314,17 @@ class Driver(object):
             for i, seg in enumerate(devset):
                 derivations = S[i]
                 lmap = L[i]
-                empdist = EmpiricalDistribution(derivations,
-                                                q_wmap=self.wmap.proxy,
-                                                p_wmap=self.wmap.target,
-                                                empirical_q=True,  # crucial: the proposal is fixed, thus we can rely on empirical estimates
-                                                get_yield=lambda d: d.tree.projection)
+                #empdist = EmpiricalDistribution(derivations,
+                #                                q_wmap=self.wmap.proxy,
+                #                                p_wmap=self.wmap.target,
+                #                                empirical_q=True,  # crucial: the proposal is fixed, thus we can rely on empirical estimates
+                #                                get_yield=lambda d: d.tree.projection)
+                support, posterior, dP = optalg.minrisk(derivations, q_wmap=self.wmap.proxy, p_wmap=self.wmap.target, empirical_q=True, get_yield=lambda d: d.tree.projection)
 
-                losses = np.array([lmap[Dy.projection] for Dy in empdist], float)
-                posterior = empdist.copy_posterior()
-                dP = empdist.copy_dpdt() 
-                dR = losses.dot(dP)
+                losses = np.array([lmap[Dy.projection] for Dy in support], float)  # l(y)
+                #posterior = empdist.copy_posterior()  # p(y)
+                #dP = empdist.copy_dpdt() #  dp(y)/dt
+                dR = losses.dot(dP) 
                 risk = losses.dot(posterior.transpose())
                 emp_risk.append(risk)
                 emp_dR.append(dR)
@@ -322,15 +353,29 @@ class Driver(object):
                 method='L-BFGS-B', 
                 jac=True, 
                 callback=callback, 
-                options={'maxiter': 20,
-                    'ftol': 1e-6,
-                    'gtol': 1e-6,
-                    'maxfun': 40,
+                options={'maxiter': self.args.rsgd[0],
+                    'ftol': 1e-4,
+                    'gtol': 1e-4,
+                    'maxfun': self.args.rsgd[1],
                     'disp': False})
         logging.info('[%s] Done!', run)
         return result.x
     
     def optimise_proxy(self, run, devset, S):
+        
+        if self.args.method == 'minkl':
+            logging.info('[%s] Minimising KL divergence', run)
+            get_obj_and_jac = optalg.minkl
+            polarity = 1
+        elif self.args.method == 'maxelb':
+            logging.info('[%s] Maximising ELB', run)
+            get_obj_and_jac = optalg.maxelb
+            polarity = -1
+        else:
+            raise NotImplementedError('Unsupported optimisation method: %s', self.args.method)
+        #elif self.args == 'minvar': 
+        #    pass
+
                                                 
         def f(theta):
 
@@ -338,48 +383,61 @@ class Driver(object):
             self.wmap.proxy.update(theta)
             logging.info('[%s] lambda=%s', run, npvec2str(theta))
 
-            K = []
-            dK = []
+            OBJ = []
+            JAC = []
             for i, seg in enumerate(devset):
                 derivations = S[i]
-                empdist = EmpiricalDistribution(derivations,
-                                                q_wmap=self.wmap.proxy,
-                                                p_wmap=self.wmap.target,
-                                                empirical_q=False,  # crucial: the proposal is changing, thus we cannot rely on empirical estimates
-                                                get_yield=lambda d: d.tree.projection)
+                #empdist = EmpiricalDistribution(derivations,
+                #                                q_wmap=self.wmap.proxy,
+                #                                p_wmap=self.wmap.target,
+                #                                empirical_q=False,  # crucial: the proposal is changing, thus we cannot rely on empirical estimates
+                #                                get_yield=lambda d: d.tree.projection)
 
-                kl, dkl = empdist.kl()
-                K.append(kl)
-                dK.append(dkl)
+                local_obj, local_jac = get_obj_and_jac(derivations, q_wmap=self.wmap.proxy, p_wmap=self.wmap.target, empirical_q=False)
+                
+                #elb, delb = empdist.elb()
+                #kl, dkl = empdist.kl()
+                # TODO: min KL  or min - ELB (should be equivalent, shouldn't it?)
+                OBJ.append(local_obj)
+                JAC.append(local_jac)
+                #hq, dhq = empdist.Hq()
+                #H.append(hq)
+                #dH.append(dhq)
 
-            obj, jac = np.mean(K, 0), np.mean(dK, 0)
+            obj, jac = np.mean(OBJ, 0), np.mean(JAC, 0)
+            if polarity != 1:
+                obj *= polarity
+                jac *= polarity
+            
+            #if self.args.temperature != 0.0:
+            #    obj -= T * np.mean(H, 0)
+            #    jac -= T * np.mean(dH, 0)
 
             r_weight = self.args.klreg
             if r_weight != 0.0:  # regularised
                 regulariser = LA.norm(theta, 2)
                 r_obj = obj + r_weight * regulariser
                 r_jac = jac + 2 * r_weight * theta
-                logging.info('[%s] KL=%f regularised=%f', run, obj, r_obj)
+                logging.info('[%s] O=%f regularised=%f', run, obj, r_obj)
                 return r_obj, r_jac
             else:
-                logging.info('[%s] KL=%f', run, obj)
+                logging.info('[%s] O=%f', run, obj)
                 return obj, jac
             
 
         def callback(theta):
             logging.info('[%s] new lambda: %s', run, npvec2str(theta))
 
-        logging.info('[%s] Minimising KL divergence', run)
         result = minimize(f, 
                 self.wmap.proxy.asarray, 
                 #method='BFGS', 
                 method='L-BFGS-B', 
                 jac=True, 
                 callback=callback, 
-                options={'maxiter': 20,
-                    'ftol': 1e-6,
-                    'gtol': 1e-6,
-                    'maxfun': 40,
+                options={'maxiter': self.args.klsgd[0],
+                    'ftol': 1e-4,
+                    'gtol': 1e-4,
+                    'maxfun': self.args.klsgd[1],
                     'disp': False})
         logging.info('[%s] Done!', run)
         return result.x

@@ -24,6 +24,10 @@ def argparse_and_config():
                         help="where samples can be found and where decisions are placed")
     parser.add_argument("dev", type=str,
                         help="development set")
+    parser.add_argument("--order", type=str, default='pq', choices=['pq', 'qp'],
+            help="Order in which to optimise parameters: p then q, or q then p")
+    parser.add_argument("--method", type=str, default='minkl', choices=['minkl', 'maxelb', 'minvar'],
+                        help="Optimisation method for instrumental distribution")
     parser.add_argument("--skip", type=int, default=0,
                         help="Skip the first n iterations")
     parser.add_argument("--maxiter", '-M', type=int, default=10,
@@ -36,8 +40,14 @@ def argparse_and_config():
                         help='this has no practical use other than perhaps debugging')
     parser.add_argument("--riskreg", type=float, default=0.0,
                         help="Risk regulariser")
+    parser.add_argument("--rsgd", type=int, nargs=2, default=[10, 20],
+                        help="Number of iterations and function evaluations for risk minimisation")
     parser.add_argument("--klreg", type=float, default=0.0,
                         help="KL regulariser")
+    parser.add_argument("--klsgd", type=int, nargs=2, default=[5, 10],
+                        help="Number of iterations and function evaluations for KL minimisation")
+    parser.add_argument("--temperature", '-T', type=float, default=0.0,
+            help="Temperature parameter for proxy's entropic prior")
     parser.add_argument("--jobs", type=int, default=2, help="number of processes")
     parser.add_argument("--devtest", type=str,
                         help="devtest set")
@@ -45,7 +55,7 @@ def argparse_and_config():
                         help="grammars for the devtest set")
     parser.add_argument("--alias", type=str,
                         help="an alias for the experiment")
-    parser.add_argument('--default', type=float, 
+    parser.add_argument('--default', type=float, default=None,
                         help='initialise all weights with a default value, if not given, we start from the values already specified in the config file')
     parser.add_argument('--consensus',
                         action='store_true',
@@ -54,7 +64,7 @@ def argparse_and_config():
             default='/Users/waziz/workspace/github/cdec/mteval/fast_score',
             help='a scoring tool such as fast_score')
     parser.add_argument('--verbose', '-v',
-                        action='store_true',
+                        action='count',
                         help='increase the verbosity level')
 
     args, config, failed = configure(parser,

@@ -104,7 +104,7 @@ class Yield(object):
     def __str__(self):
         return self.yield_
 
-    def len(self):
+    def __len__(self):
         return len(self.tokens_)
 
     def __iter__(self):

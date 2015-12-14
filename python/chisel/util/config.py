@@ -20,9 +20,10 @@ def configure(parser, set_defaults=[], required_sections=['proxy', 'target', 'cd
 
     if configure_logging:
         if args.verbose:
-            logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)s %(message)s', datefmt='%H:%M:%S')
-        else:
-            logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s', datefmt='%H:%M:%S')
+            if args.verbose > 1:
+                logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)s %(message)s', datefmt='%H:%M:%S')
+            else:
+                logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s', datefmt='%H:%M:%S')
 
     # parse the config file
     config = RawConfigParser()
