@@ -1,12 +1,12 @@
 __author__ = 'waziz'
 
-from chisel.smt import Solution
-from chisel.util import npvec2str, fmap_dot
 import numpy as np
 import sys
+from collections import defaultdict
 from chisel.smt import groupby
 from chisel.util import obj2id
-from collections import defaultdict
+from chisel.smt import Solution
+from chisel.util import npvec2str, fmap_dot
 
 
 def minrisk(derivations, q_wmap, p_wmap, get_yield, empirical_q=True, alpha=1.0, beta=1.0):

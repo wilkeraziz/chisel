@@ -17,7 +17,7 @@ from functools import partial
 from chisel.util.wmap import WMap, JointWMap
 from chisel.learning import risk, divergence
 from chisel.util import scaled_fmap, npvec2str
-from chisel.util.io import SegmentMetaData, list_numbered_files
+from chisel.util.iotools import SegmentMetaData, list_numbered_files
 from chisel.util.config import configure, section_literal_eval
 
 

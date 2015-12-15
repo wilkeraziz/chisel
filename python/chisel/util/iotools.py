@@ -1,13 +1,33 @@
 __author__ = 'waziz'
 
 import re
-from os.path import isfile, basename
+from os.path import isfile, basename, splitext
 import logging
 from chisel.smt import Yield, Derivation, Tree, SVector
 import math
 from glob import glob
 from collections import defaultdict, deque
 from wmap import WMap
+import gzip
+from io import TextIOWrapper
+
+
+def smart_ropen(path):
+    """Open file in reading mode directly or through gzip depending on extension."""
+    if path.endswith('.gz'):
+        #return TextIOWrapper(gzip.open(path, 'rb'))  # python3
+        return gzip.open(path, 'rb')
+    else:
+        return open(path, 'r')
+
+
+def smart_wopen(path):
+    """Open file in writing mode directly or through gzip depending on extension."""
+    if path.endswith('.gz'):
+        #return TextIOWrapper(gzip.open(path, 'wb'))  # python3
+        return gzip.open(path, 'wb')
+    else:
+        return open(path, 'w')
 
 
 # TODO: generalise format to be able to read lines with repeated keys
@@ -18,7 +38,7 @@ def read_config(path):
     :return: dictionary containing the key-value pairs in the config file
     """
     config = {}
-    with open(path) as f:
+    with smart_ropen(path) as f:
         for line in f:
             if line.startswith('#'):
                 continue
@@ -36,7 +56,7 @@ def read_weights(path, scaling=1.0):
     :return:
     """
     weights = {}
-    with open(path) as f:
+    with smart_ropen(path) as f:
         for line in f:
             if line.startswith('#'):
                 continue
@@ -137,7 +157,7 @@ def parse_plain(plain_str):
 
 def list_numbered_files(basedir, sort=True, reverse=False):
     paths = glob('{0}/[0-9]*'.format(basedir))
-    ids = [int(basename(path)) for path in paths]
+    ids = [int(splitext(basename(path))[0]) for path in paths]
     if not sort:
         return zip(ids, paths)
     else:
@@ -242,4 +262,4 @@ def read_sampled_derivations(iterable):
 
 
 def sampled_derivations_from_file(input_file):
-    return read_sampled_derivations(open(input_file))
+    return read_sampled_derivations(smart_ropen(input_file))

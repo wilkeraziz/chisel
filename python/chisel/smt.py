@@ -6,11 +6,11 @@ __author__ = 'waziz'
 
 import re
 import itertools
-from collections import defaultdict
-from semiring import CountSemiring, ProbabilitySemiring
 import numpy as np
-from util import npvec2str, kv2str
+from collections import defaultdict
 from operator import xor
+from chisel.semiring import CountSemiring, ProbabilitySemiring
+from chisel.util import npvec2str, kv2str
 
 
 class SVector(object):

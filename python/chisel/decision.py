@@ -6,16 +6,17 @@ import sys
 import traceback
 import os
 import argparse
-from multiprocessing import Pool
-from decoder import MBR, MAP, consensus
-from util.io import read_sampled_derivations, read_block, list_numbered_files
-from decoder.estimates import EmpiricalDistribution
-from smt import groupby, KBestSolution
 from functools import partial
-from util import scaled_fmap, dict2str
-from util.config import section_literal_eval, configure
-from util.wmap import WMap
-import mteval
+from multiprocessing import Pool
+from chisel.decoder import MBR, MAP, consensus
+from chisel.util.iotools import read_sampled_derivations, read_block, list_numbered_files
+from chisel.decoder.estimates import EmpiricalDistribution
+from chisel.smt import groupby, KBestSolution
+from chisel.util import scaled_fmap, dict2str
+from chisel.util.config import section_literal_eval, configure
+from chisel.util.wmap import WMap
+from chisel.util.iotools import smart_ropen, smart_wopen
+import chisel.mteval as mteval
 
 
 def sort_by(empdist, scores, reward=True):
@@ -51,7 +52,7 @@ def make_decisions(job_desc, headers, options):  #, q_wmap, p_wmap):
     # this code runs in a Pool, thus we wrap in try/except in order to have more informative exceptions
     jid, path = job_desc
     try:
-        derivations, q_wmap, p_wmap = read_sampled_derivations(open(path, 'r'))
+        derivations, q_wmap, p_wmap = read_sampled_derivations(smart_ropen(path))
         logging.debug('job=%d derivations=%d empdist...', jid, len(derivations))
         empdist = EmpiricalDistribution(derivations,
                                         q_wmap=q_wmap,
@@ -105,7 +106,7 @@ def decide_and_save(job_desc, headers, options, output_dirs):
         decisions = make_decisions(job_desc, headers, options)  #, q_wmap, p_wmap)
         # write to file if necessary
         for rule, ranking in decisions.iteritems():
-            with open('{0}/{1}'.format(output_dirs[rule], jid), 'w') as out:
+            with smart_wopen('{0}/{1}.gz'.format(output_dirs[rule], jid)) as out:
                 print >> out, '\t'.join(['#target', '#p', '#q', '#yield'])
                 for solution in ranking:
                     print >> out, solution.format_str(keys=['p', 'q', 'yield'])
@@ -221,10 +222,10 @@ def main():
     for rule in decision_rules:
         if rule == 'MAP':
             output_dirs[rule] = create_decision_rule_dir(options.workspace, rule)
-            one_best_files[rule] = '{0}/output/{1}'.format(options.workspace, rule)
+            one_best_files[rule] = '{0}/output/{1}.gz'.format(options.workspace, rule)
         else:
             output_dirs[rule] = create_decision_rule_dir(options.workspace, rule, options.metric)
-            one_best_files[rule] = '{0}/output/{1}-{2}'.format(options.workspace, rule, options.metric)
+            one_best_files[rule] = '{0}/output/{1}-{2}.gz'.format(options.workspace, rule, options.metric)
         logging.info("Writing '%s' solutions to %s", rule, output_dirs[rule])
         logging.info("Writing 1-best '%s' yields to %s", rule, one_best_files[rule])
 
@@ -260,7 +261,7 @@ def main():
                        jobs)
     # save the 1-best solution for each decision rule in a separate file
     for rule in decision_rules:
-        with open(one_best_files[rule], 'wb') as fout:
+        with smart_wopen(one_best_files[rule]) as fout:
             for decisions in results:
                 best = decisions[rule]  # instance of KBestSolution
                 print >> fout, best.solution.Dy.projection

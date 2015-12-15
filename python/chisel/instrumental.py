@@ -15,19 +15,18 @@ from multiprocessing import Pool
 from functools import partial
 from ConfigParser import RawConfigParser
 from scipy.optimize import minimize, basinhopping
-
-
-import ff
-import cdeclib
-from util import fpairs2str, dict2str, fmap_dot, scaled_fmap
-from util import resample as do_resample
-from util.config import configure, section_literal_eval
-from util.io import SegmentMetaData
-from smt import SVector, Tree, Derivation
-from util.logtools import timethis
 from tabulate import tabulate
 from scipy import linalg as LA
-from chisel.util import obj2id
+
+import chisel.ff as ff
+import chisel.cdeclib as cdeclib
+from chisel.util import obj2id 
+from chisel.util import fpairs2str, dict2str, fmap_dot, scaled_fmap
+from chisel.util import resample as do_resample
+from chisel.util.config import configure, section_literal_eval
+from chisel.util.iotools import SegmentMetaData, smart_ropen, smart_wopen
+from chisel.smt import SVector, Tree, Derivation
+from chisel.util.logtools import timethis
 
 
 class Sampler(object):
@@ -104,7 +103,7 @@ class Sampler(object):
         return raw_samples 
 
     def save(self, raw_samples, odir, suffix=''):
-        with open('{0}/{1}{2}'.format(odir, self.segment_.id, suffix), 'w') as fo:
+        with smart_wopen('{0}/{1}{2}.gz'.format(odir, self.segment_.id, suffix)) as fo:
             print >> fo, '[proxy]'
             print >> fo, '\n'.join('{0}={1}'.format(k, v) for k, v in sorted(self.proxy_weights_.iteritems(), key=lambda (k,v): k))
             print >> fo

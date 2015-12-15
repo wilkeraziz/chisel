@@ -1,12 +1,12 @@
 __author__ = 'waziz'
 
-from chisel.smt import Solution
-from chisel.util import npvec2str, fmap_dot
 import numpy as np
 import sys
+from collections import defaultdict
+from chisel.smt import Solution
+from chisel.util import npvec2str, fmap_dot
 from chisel.smt import groupby
 from chisel.util import obj2id
-from collections import defaultdict
 
 class EmpiricalDistribution(object):
     """

@@ -17,9 +17,9 @@ from functools import partial
 from chisel.learning import risk, divergence
 from chisel.util.wmap import WMap, JointWMap
 from chisel.util import scaled_fmap, npvec2str
-from chisel.util.io import SegmentMetaData, list_numbered_files
+from chisel.util.iotools import SegmentMetaData, list_numbered_files
 from chisel.util.config import configure, section_literal_eval
-from divergence import KLDriver
+from chisel.learning.divergence import KLDriver
 
 def wrapped_risk(job, iteration, q_wmap, p_wmap, metric, sample_headers, consensus=False, save_to=None):
     # this code runs in a Pool, thus we wrap in try/except in order to have more informative exceptions

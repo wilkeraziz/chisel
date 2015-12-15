@@ -2,9 +2,9 @@ __author__ = 'waziz'
 
 import cdec
 import logging
-import gzip
 from collections import defaultdict
-from util.logtools import debugtime
+from chisel.util.logtools import debugtime
+from chisel.util.iotools import smart_ropen
 
 
 def make_cdec_config_string(cdec_items, cdec_features_items):
@@ -63,7 +63,7 @@ def build_proxy(input_str, grammar_file, decoder):
     :return: hypergraph
     """
     logging.info('Loading grammar: %s', grammar_file)
-    with gzip.open(grammar_file) as f:
+    with smart_ropen(grammar_file) as f:
         grammar = f.read()
     logging.info('Composing the forest')
     forest = decoder.translate(input_str, grammar=grammar)

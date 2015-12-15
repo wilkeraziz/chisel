@@ -7,22 +7,22 @@ import sys
 import argparse
 import math
 import os
+import traceback
+import itertools
+from tabulate import tabulate
 from time import time
 from multiprocessing import Pool
 from functools import partial
 from ConfigParser import RawConfigParser
-import ff
-import cdeclib
+import chisel.ff as ff
+import chisel.cdeclib as cdeclib
 import numpy as np
-from util import fpairs2str, dict2str, fmap_dot, scaled_fmap
-from util import resample as do_resample
-from util.config import configure, section_literal_eval
-from util.io import SegmentMetaData
-import traceback
-import itertools
-from smt import SVector, Tree, Derivation
-from instrumental import Sampler, KLOptimiser
-from tabulate import tabulate
+from chisel.util import fpairs2str, dict2str, fmap_dot, scaled_fmap
+from chisel.util import resample as do_resample
+from chisel.util.config import configure, section_literal_eval
+from chisel.util.iotools import SegmentMetaData
+from chisel.smt import SVector, Tree, Derivation
+from chisel.instrumental import Sampler, KLOptimiser
 
 
 def argparse_and_config():

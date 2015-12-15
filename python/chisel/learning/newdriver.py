@@ -7,25 +7,24 @@ import traceback
 import sys
 import numpy as np
 from numpy import linalg as LA
-
+from collections import namedtuple
 from multiprocessing import Pool
 from time import time, strftime
 from scipy.optimize import minimize
-
 from ConfigParser import RawConfigParser
 from functools import partial
+
 from chisel.learning import risk, divergence
 from chisel.decoder.estimates import EmpiricalDistribution
 from chisel.util.wmap import WMap, JointWMap
 from chisel.util import scaled_fmap, npvec2str
-from chisel.util.io import SegmentMetaData, list_numbered_files
+from chisel.util.iotools import SegmentMetaData, list_numbered_files, smart_ropen, smart_wopen
+from chisel.util.iotools import sampled_derivations_from_file
 from chisel.util.config import configure, section_literal_eval
-from divergence import KLDriver
-import newestimates as optalg
-from chisel.util.io import sampled_derivations_from_file
+from chisel.learning.divergence import KLDriver
+import chisel.learning.newestimates as optalg
 from chisel.mteval.fast_bleu import TrainingBLEU
 
-from collections import namedtuple
 
 MTEvalHyp = namedtuple('MTEvalHyp', ['projection', 'leaves'])
 
@@ -119,11 +118,11 @@ class Driver(object):
         else:
             [config.set('target', f, v) for f, v in target.iteritems()]
     
-        with open('{0}/config{1}.ini'.format(self.workspace, number + 1), 'wb') as fo:
+        with smart_wopen('{0}/config{1}.ini'.format(self.workspace, number + 1)) as fo:
             config.write(fo)
     
     def path_to_log(self, source, iteration, err=False):
-        return '{0}/log/{1}.{2}.std{3}'.format(self.workspace, source, iteration, 'err' if err else 'out')
+        return '{0}/log/{1}.{2}.std{3}.gz'.format(self.workspace, source, iteration, 'err' if err else 'out')
     
     def sample(self, iteration):
         options = {'config': '{0}/config{1}.ini'.format(self.workspace, iteration - 1), 
@@ -133,9 +132,9 @@ class Driver(object):
 
         t0 = time()
         logging.info('[%d] Sampling...', iteration)
-        with open('{0}/dev.input'.format(self.workspace), 'rb') as fi:
-            with open(self.path_to_log('sampling', iteration), 'wb') as fo:
-                with open(self.path_to_log('sampling', iteration, err=True), 'wb') as fe:
+        with smart_ropen('{0}/dev.input'.format(self.workspace)) as fi:
+            with smart_wopen(self.path_to_log('sampling', iteration)) as fo:
+                with smart_wopen(self.path_to_log('sampling', iteration, err=True)) as fe:
                     proc = sp.Popen(cmd_args, stdin=fi, stdout=fo, stderr=fe)
                     proc.wait()
         dt = time() - t0
@@ -156,9 +155,9 @@ class Driver(object):
         cmd_args = shlex.split(cmd_str)
         t0 = time()
         logging.info('[%d] Sampling (devtest)...', iteration)
-        with open('{0}/devtest.input'.format(self.workspace), 'rb') as fi:
-            with open(self.path_to_log('sampling-devtest', iteration), 'wb') as fo:
-                with open(self.path_to_log('sampling-devtest', iteration, err=True), 'wb') as fe:
+        with smart_ropen('{0}/devtest.input'.format(self.workspace)) as fi:
+            with smart_wopen(self.path_to_log('sampling-devtest', iteration)) as fo:
+                with smart_wopen(self.path_to_log('sampling-devtest', iteration, err=True)) as fe:
                     proc = sp.Popen(cmd_args, stdin=fi, stdout=fo, stderr=fe)
                     proc.wait()
         dt = time() - t0
@@ -168,8 +167,8 @@ class Driver(object):
         logging.info('[%d] deciding (devtest): %s', iteration, cmd_str)
         cmd_args = shlex.split(cmd_str)
         t0 = time()
-        with open(self.path_to_log('decision-devtest', iteration), 'wb') as fo:
-            with open(self.path_to_log('decision-devtest', iteration, err=True), 'wb') as fe:
+        with smart_wopen(self.path_to_log('decision-devtest', iteration)) as fo:
+            with smart_wopen(self.path_to_log('decision-devtest', iteration, err=True)) as fe:
                 proc = sp.Popen(cmd_args, stdin=None, stdout=fo, stderr=fe)
                 proc.wait()
         dt = time() - t0
@@ -177,16 +176,16 @@ class Driver(object):
         # mt eval
         cmd_str = '{0} -r {1}'.format(self.args.scoring_tool, '{0}/devtest.refs'.format(self.workspace))
         cmd_args = shlex.split(cmd_str)
-        trans_path = '{0}/output/consensus-bleu'.format(options['workspace'])
-        with open(trans_path, 'r') as fin:
+        trans_path = '{0}/output/consensus-bleu.gz'.format(options['workspace'])
+        with smart_ropen(trans_path) as fin:
             bleu_out = '{0}.bleu.stdout'.format(trans_path)
             bleu_err = '{0}.bleu.stderr'.format(trans_path)
-            with open(bleu_out, 'w') as fout:
-                with open(bleu_err, 'w') as ferr:
+            with smart_wopen(bleu_out) as fout:
+                with smart_wopen(bleu_err) as ferr:
                     proc = sp.Popen(cmd_args, stdin=fin, stdout=fout, stderr=ferr)
                     proc.wait()
                     try:
-                        with open(bleu_out, 'r') as fi:
+                        with smart_ropen(bleu_out) as fi:
                             line = next(fi)
                             return float(line.strip())
                     except:
@@ -241,7 +240,7 @@ class Driver(object):
             input_files = list_numbered_files(samples_dir)
             S = []
             for fid, input_file in input_files:
-                logging.debug(' reading %s', fid)
+                logging.debug(' reading %s from %s', fid, input_file)
                 derivations, _qmap, _pmap = sampled_derivations_from_file(input_file)
                 S.append(derivations)
             # compute loss
@@ -258,7 +257,7 @@ class Driver(object):
                 lmap = {y: scorer.loss(y.split()) for y in projections}
                 L.append(lmap)
                 if save_losses:
-                    with open('{0}/{1}'.format(loss_dir, seg.id), 'w') as fo:
+                    with smart_wopen('{0}/{1}.gz'.format(loss_dir, seg.id)) as fo:
                         for d in derivations:
                             fo.write('{0} {1}\n'.format(lmap[d.tree.projection]))
             logging.info('fast_bleu finished')
@@ -278,7 +277,7 @@ class Driver(object):
                     L.append(lmap)
                     # saves losses
                     if save_losses:
-                        with open('{0}/{1}'.format(loss_dir, seg.id), 'w') as fo:
+                        with smart_wopen('{0}/{1}.gz'.format(loss_dir, seg.id)) as fo:
                             for d in derivations:
                                 fo.write('{0} {1}\n'.format(lmap[d.tree.projection]))
                 logging.info('slow_bleu finished')
@@ -499,7 +498,7 @@ class Driver(object):
         config.add_section('target')
         [config.set('target', f, v) for f, v in target_wmap.iteritems()]
         
-        with open('{0}/config0.ini'.format(workspace), 'wb') as fo:
+        with smart_wopen('{0}/config0.ini'.format(workspace)) as fo:
             config.write(fo)
 
         return '{0}/config0.ini'.format(workspace)
@@ -512,7 +511,7 @@ class Driver(object):
             if config.has_section('chisel:sampler'):
                 sampler_map = section_literal_eval(config.items('chisel:sampler'))
                 grammar_dir = sampler_map.get('grammars', None)
-        with open(path, 'r') as f:
+        with smart_ropen(path) as f:
             devset = [SegmentMetaData.parse(line.strip(),
                                               input_format,
                                               grammar_dir=grammar_dir)
@@ -520,8 +519,8 @@ class Driver(object):
         logging.info('%d %s instances', len(devset), stem)
 
         # dump source and references
-        with open('{0}/{1}.input'.format(workspace, stem), 'wb') as fi:
-            with open('{0}/{1}.refs'.format(workspace, stem), 'wb') as fr:
+        with smart_wopen('{0}/{1}.input'.format(workspace, stem)) as fi:
+            with smart_wopen('{0}/{1}.refs'.format(workspace, stem)) as fr:
                 for seg in devset:
                     print >> fi, seg.to_sgm(dump_refs=False)
                     print >> fr, ' ||| '.join(str(ref) for ref in seg.refs)

@@ -6,8 +6,8 @@
 import argparse
 import logging
 import sys
-from learning.newdriver import Driver
-from util.config import section_literal_eval, configure
+from chisel.learning.newdriver import Driver
+from chisel.util.config import section_literal_eval, configure
 
 
 def main(args, config):

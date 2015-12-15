@@ -6,7 +6,7 @@ import logging
 import chisel.mteval as mteval
 from collections import defaultdict
 from time import time
-from chisel.util.io import sampled_derivations_from_file
+from chisel.util.iotools import sampled_derivations_from_file
 from chisel.decoder.estimates import EmpiricalDistribution
 from chisel.smt import groupby
 from collections import namedtuple
