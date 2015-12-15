@@ -1,4 +1,6 @@
+import io
 import os
+from os.path import splitext
 import logging
 import shlex
 import chisel.mteval as mteval
@@ -163,7 +165,7 @@ class Driver(object):
         dt = time() - t0
         logging.info('[%d] sampling took %f seconds', iteration, dt)
         # decision rule
-        cmd_str = 'python -m chisel.decision %(config)s %(workspace)s --consensus' % options
+        cmd_str = 'python -m chisel.fast_consensus %(config)s %(workspace)s ' % options
         logging.info('[%d] deciding (devtest): %s', iteration, cmd_str)
         cmd_args = shlex.split(cmd_str)
         t0 = time()
@@ -176,12 +178,13 @@ class Driver(object):
         # mt eval
         cmd_str = '{0} -r {1}'.format(self.args.scoring_tool, '{0}/devtest.refs'.format(self.workspace))
         cmd_args = shlex.split(cmd_str)
-        trans_path = '{0}/output/consensus-bleu.gz'.format(options['workspace'])
+        trans_path = '{0}/output/consensus-bleu'.format(options['workspace'])
         with smart_ropen(trans_path) as fin:
-            bleu_out = '{0}.bleu.stdout'.format(trans_path)
-            bleu_err = '{0}.bleu.stderr'.format(trans_path)
+            bleu_out = '{0}.bleu.stdout'.format(splitext(trans_path)[0])
+            bleu_err = '{0}.bleu.stderr'.format(splitext(trans_path)[0])
             with smart_wopen(bleu_out) as fout:
                 with smart_wopen(bleu_err) as ferr:
+                    logging.info(cmd_args)
                     proc = sp.Popen(cmd_args, stdin=fin, stdout=fout, stderr=ferr)
                     proc.wait()
                     try:

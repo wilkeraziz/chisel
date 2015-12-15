@@ -222,10 +222,10 @@ def main():
     for rule in decision_rules:
         if rule == 'MAP':
             output_dirs[rule] = create_decision_rule_dir(options.workspace, rule)
-            one_best_files[rule] = '{0}/output/{1}.gz'.format(options.workspace, rule)
+            one_best_files[rule] = '{0}/output/{1}'.format(options.workspace, rule)
         else:
             output_dirs[rule] = create_decision_rule_dir(options.workspace, rule, options.metric)
-            one_best_files[rule] = '{0}/output/{1}-{2}.gz'.format(options.workspace, rule, options.metric)
+            one_best_files[rule] = '{0}/output/{1}-{2}'.format(options.workspace, rule, options.metric)
         logging.info("Writing '%s' solutions to %s", rule, output_dirs[rule])
         logging.info("Writing 1-best '%s' yields to %s", rule, one_best_files[rule])
 

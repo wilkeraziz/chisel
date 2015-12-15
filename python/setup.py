@@ -2,7 +2,7 @@ from setuptools import setup
 from Cython.Build import cythonize
 import numpy as np
 
-ext_modules = cythonize(['chisel/mteval/fast_bleu.pyx'],
+ext_modules = cythonize(['chisel/mteval/fast_bleu.pyx', 'chisel/util/argmin.pyx'],
         language='c++',
         exclude=[])
 
