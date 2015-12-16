@@ -9,6 +9,11 @@ from chisel.smt import Solution
 from chisel.util import npvec2str, fmap_dot
 
 
+def entropy(p_dot, p, log_p, dp):
+    H = -(p * log_p).sum()
+    dH = -(dp * (p_dot + 1)[:, np.newaxis]).sum()
+    return H, dH
+
 def py(derivations, q_wmap, p_wmap, get_yield, empirical_q=True, alpha=1.0, beta=1.0):
     """
     :param support: list of DerivationGroup objects, each of which represents derivations sharing the same yield (Dy)
@@ -150,7 +155,11 @@ def minrisk(derivations, q_wmap, p_wmap, get_yield, empirical_q=True, alpha=1.0,
     # <\gamma_y(d) f(d)>_p
     p_expected_f_y = np.array([select(fdpd_y, y).sum(0) for y in Y])
     dpdt = alpha * (p_expected_f_y - p_expected_f) * py[:,np.newaxis]
-    return support, py, dpdt
+ 
+    # entropy
+    H = -(py * np.log(py)).sum(0)
+    dH = -(dpdt * (np.log(py) + 1)[:,np.newaxis]).sum(0)
+    return support, py, dpdt, H, dH
 
 def maxelb(derivations, q_wmap, p_wmap, empirical_q=False):
     # counts
@@ -179,7 +188,10 @@ def maxelb(derivations, q_wmap, p_wmap, empirical_q=False):
     ELB = ((p_dot - log_qd) * qd).sum()
     dqdl = (gd - q_expected_g) * qd[:,np.newaxis]
     dELB = (dqdl * (p_dot - log_qd - 1)[:, np.newaxis]).sum(0)
-    return ELB, dELB
+    
+    H, dH = entropy(q_dot, qd, log_qd, dqdl)
+    return ELB, dELB, H, dH
+
 
 def minkl(derivations, q_wmap, p_wmap, empirical_q=False):
     # counts
@@ -206,10 +218,14 @@ def minkl(derivations, q_wmap, p_wmap, empirical_q=False):
     # expected features
     gd = np.array([d.vector.as_array(q_wmap.features) for d in derivations])
     q_expected_g = (gd * qd[:,np.newaxis]).sum(0)
-    
+
     KL = (qd * (log_qd - log_rd)).sum()
-    dKL = (((gd - q_expected_g).transpose() * qd) * (log_qd - log_rd + 1)).transpose().sum(0)
-    return KL, dKL
+    dqdl = (gd - q_expected_g) * qd[:,np.newaxis]
+    #dKL = (((gd - q_expected_g).transpose() * qd) * (log_qd - log_rd + 1)).transpose().sum(0)
+    dKL = (dqdl * (log_qd - log_rd + 1)[:,np.newaxis]).sum(0)
+    
+    H, dH = entropy(q_dot, qd, log_qd, dqdl)
+    return KL, dKL, H, dH
 
 def minvar(derivations, q_wmap, p_wmap, empirical_q=False, alpha=1.0, beta=1.0):
     pass

@@ -81,17 +81,17 @@ class Driver(object):
         self.alpha_q = 1.0 # 0.1
         self.workspace = Driver._MAKE_WORKSPACE_(self.args.workspace, 'SGD', self.args.metric, self.args.alias)
 
-        if args.skip == 0:
+        if args.resume == 0:
             self.wmap = Driver._START_MODEL_(self.config, default=self.args.default)
             Driver._BASE_CONFIG_(self.config, self.workspace, self.wmap.proxy, self.wmap.target)
         else:
-            logging.info('Loading model %s', '{0}/config{1}.ini'.format(self.workspace, args.skip))
-            self.wmap = self.configure('{0}/config{1}.ini'.format(self.workspace, args.skip))
+            logging.info('Loading model %s', '{0}/config{1}.ini'.format(self.workspace, args.resume - 1))
+            self.wmap = self.configure('{0}/config{1}.ini'.format(self.workspace, args.resume - 1))
 
-        self.devset = Driver._PREPARE_DEVSET_(self.workspace, self.args.dev, config, 'dev')
+        self.devset = Driver._PREPARE_DEVSET_(self.workspace, self.args.dev, config, alias=self.args.dev_alias)
         self.devtest = None
         if args.devtest:  # load devtest set if given
-            self.devtest = Driver._PREPARE_DEVSET_(self.workspace, self.args.devtest, config, 'devtest', grammar_dir=args.devtest_grammar)
+            self.devtest = Driver._PREPARE_DEVSET_(self.workspace, self.args.devtest, config, alias=self.args.devtest_alias, grammar_dir=args.devtest_grammar)
 
         Driver._LOAD_METRIC_(self.config, self.args.metric)
         self.tune()
@@ -124,27 +124,7 @@ class Driver(object):
             config.write(fo)
     
     def path_to_log(self, source, iteration, err=False):
-        return '{0}/log/{1}.{2}.std{3}.gz'.format(self.workspace, source, iteration, 'err' if err else 'out')
-    
-    def sample(self, iteration):
-        options = {'config': '{0}/config{1}.ini'.format(self.workspace, iteration - 1), 
-                'workspace': '{0}/run{1}'.format(self.workspace, iteration)}
-        cmd_str = 'python -m chisel.sampler %(config)s %(workspace)s' % options
-        cmd_args = shlex.split(cmd_str)
-
-        t0 = time()
-        logging.info('[%d] Sampling...', iteration)
-        with smart_ropen('{0}/dev.input'.format(self.workspace)) as fi:
-            with smart_wopen(self.path_to_log('sampling', iteration)) as fo:
-                with smart_wopen(self.path_to_log('sampling', iteration, err=True)) as fe:
-                    proc = sp.Popen(cmd_args, stdin=fi, stdout=fo, stderr=fe)
-                    proc.wait()
-        dt = time() - t0
-        logging.info('[%d] sampling took %f seconds', iteration, dt)
-        #if not self.check_samples(self.iteration):
-        #    raise Exception('chisel.sampler appears to have failed at iteration %d', run.iteration)
-        return '{0}/run{1}/samples'.format(self.workspace, iteration)
-    
+        return '{0}/log/{1}.{2}.std{3}'.format(self.workspace, source, iteration, 'err' if err else 'out')
     
     def mteval(self, iteration):
         # sample
@@ -184,7 +164,7 @@ class Driver(object):
             bleu_err = '{0}.bleu.stderr'.format(splitext(trans_path)[0])
             with smart_wopen(bleu_out) as fout:
                 with smart_wopen(bleu_err) as ferr:
-                    logging.info(cmd_args)
+                    # logging.info(cmd_args)
                     proc = sp.Popen(cmd_args, stdin=fin, stdout=fout, stderr=ferr)
                     proc.wait()
                     try:
@@ -224,85 +204,69 @@ class Driver(object):
 
         metric = self.args.metric
         devset = self.devset
+    
+        run = RunCount()
+        Tp = self.args.Tp
+        Tq = self.args.Tq
+        pcooling = self.args.pcooling_lag
+        qcooling = self.args.qcooling_lag
+        
+        # Iteration 0 consists in assessing devtest with the initial weight vector
+        if self.args.resume == 0:
+            devtest_score = self.devtest_eval(run.iteration)
+            logging.info('[%d] Devtest eval (initialiser): %s', run.iteration, devtest_score)
 
-        run = RunCount(self.args.skip)
-            
-        if self.args.skip == 0:
-            eval_score = self.mteval(run.iteration)
-            logging.info('[%d] Devtest eval: %s', run.iteration, eval_score)
-
-        for loop in range(self.args.skip, self.args.maxiter):  # TODO: implement skip, eval devtest
+        for loop in range(1, self.args.maxiter + 1):  
             run.next_run()
+            # deal with cooling schedule
+            if pcooling <= 0:
+                Tp /= self.args.pcooling_factor  # cool down
+                if Tp < self.args.minTp:  # ensure minimum temperature
+                    Tp = self.args.minTp
+                pcooling = self.args.pcooling_lag  # reset lag
+            pcooling -= 1
+            if qcooling <= 0:
+                Tq /= self.args.qcooling_factor  # cool down
+                if Tq < self.args.minTq:  # ensure minimum temperature
+                    Tq = self.args.minTq  
+                qcooling = self.args.qcooling_lag  # reset lag
+            qcooling -= 1
+            logging.info('[%d] Tp=%s Tq=%s', run.iteration, Tp, Tq)
+            # skip complete iterations
+            if loop < self.args.resume:
+                continue
             path_to_run = '{0}/run{1}'.format(self.workspace, run.iteration)
-            # sample
-            self.sample(run.iteration)  # sample in parallel
-            samples_dir = '{0}/samples'.format(path_to_run)
+            mkdir(path_to_run)
+            # sample for dev (using the previous config file)
+            samples_dir = self.sample(run.iteration, self.args.dev_alias, config=run.iteration - 1)  
             if not os.path.isdir(samples_dir):
                 raise Exception('[%d] could not find samples' % run.iteration)
-            logging.info('[%d] reading samples from %s', run.iteration, samples_dir)
-            input_files = list_numbered_files(samples_dir)
-            S = []
-            for fid, input_file in input_files:
-                logging.debug(' reading %s from %s', fid, input_file)
-                derivations, _qmap, _pmap = sampled_derivations_from_file(input_file)
-                S.append(derivations)
+            # eval dev set if necessary
+            if not self.args.no_eval_dev:
+                self.decide(run.iteration, self.args.dev_alias, config=run.iteration - 1)
+                dev_score = self.assess(run.iteration, self.args.dev_alias)
+                logging.info('[%d] Dev eval (begin of iteration): %s', run.iteration, dev_score)
+            # load samples for optimisation
+            S = self.read_samples(run.iteration, self.args.dev_alias)
             # compute loss
-            save_losses = False
-            L = []
-            loss_dir = '{0}/loss'.format(path_to_run)
-            mkdir(loss_dir)
-
-            logging.info('Running fast_bleu')
-            for i, derivations in enumerate(S):
-                seg = devset[i]
-                projections = frozenset(d.tree.projection for d in derivations)
-                scorer = TrainingBLEU(seg.refs)
-                lmap = {y: scorer.loss(y.split()) for y in projections}
-                L.append(lmap)
-                if save_losses:
-                    with smart_wopen('{0}/{1}.gz'.format(loss_dir, seg.id)) as fo:
-                        for d in derivations:
-                            fo.write('{0} {1}\n'.format(lmap[d.tree.projection]))
-            logging.info('fast_bleu finished')
-
-            #############
-            if False:
-                logging.info('[%s] Computing loss against references', run.iteration)
-                for i, derivations in enumerate(S):  # TODO: compute loss in parallel
-                    seg = devset[i]
-                    logging.debug(' assessing %s', seg.id)
-                    projections = frozenset(d.tree.projection for d in derivations)
-                    hyps = [MTEvalHyp(y, tuple(y.split())) for y in projections]
-                    #hyps = [d.tree for d in derivations]
-                    mteval.prepare_training(seg.src, seg.refs, hyps)
-                    lmap = {hyp.projection: mteval.training_loss(c=h, metric=metric) for h, hyp in enumerate(hyps)}
-                    #losses = np.array([mteval.training_loss(c=h, metric=metric) for h in range(len(hyps))], float)
-                    L.append(lmap)
-                    # saves losses
-                    if save_losses:
-                        with smart_wopen('{0}/{1}.gz'.format(loss_dir, seg.id)) as fo:
-                            for d in derivations:
-                                fo.write('{0} {1}\n'.format(lmap[d.tree.projection]))
-                logging.info('slow_bleu finished')
-            #################
-
+            L = self.training_loss(run.iteration, self.args.dev_alias, segments=devset, samples=S)
             # tuning iteration
             if self.args.order == 'pq':
-                target_weights = self.optimise_target(run, devset, S, L)
+                target_weights = self.optimise_target(run, devset, S, L, Tp, self.args.pL2)
                 self.wmap.target.update(target_weights)
-                proxy_weights = self.optimise_proxy(run, devset, S)
+                proxy_weights = self.optimise_proxy(run, devset, S, Tq, self.args.qL2)
                 self.wmap.proxy.update(proxy_weights)
             else:
-                proxy_weights = self.optimise_proxy(run, devset, S)
+                proxy_weights = self.optimise_proxy(run, devset, S, Tq, self.args.qL2)
                 self.wmap.proxy.update(proxy_weights)
-                target_weights = self.optimise_target(run, devset, S, L)
+                target_weights = self.optimise_target(run, devset, S, L, Tp, self.args.pL2)
                 self.wmap.target.update(target_weights)
             # update the config that precedes this run
             self.update_config_file(run.iteration - 1)
-            eval_score = self.mteval(run.iteration)
-            logging.info('[%d] Devtest eval: %s', run.iteration, eval_score)
+            devtest_score = self.devtest_eval(run.iteration)
+            logging.info('[%d] Devtest eval (end of iteration): %s', run.iteration, devtest_score)
 
-    def optimise_target(self, run, devset, S, L):
+    def optimise_target(self, run, devset, S, L, Tp, l2_weight):
                                                 
         def f(theta):
 
@@ -313,6 +277,8 @@ class Driver(object):
 
             emp_risk = []
             emp_dR = []
+            H = []
+            dH = []
             for i, seg in enumerate(devset):
                 derivations = S[i]
                 lmap = L[i]
@@ -321,7 +287,9 @@ class Driver(object):
                 #                                p_wmap=self.wmap.target,
                 #                                empirical_q=True,  # crucial: the proposal is fixed, thus we can rely on empirical estimates
                 #                                get_yield=lambda d: d.tree.projection)
-                support, posterior, dP = optalg.minrisk(derivations, q_wmap=self.wmap.proxy, p_wmap=self.wmap.target, empirical_q=True, get_yield=lambda d: d.tree.projection)
+                support, posterior, dP, local_H, local_dH = optalg.minrisk(derivations, 
+                        q_wmap=self.wmap.proxy, p_wmap=self.wmap.target, 
+                        empirical_q=True, get_yield=lambda d: d.tree.projection)
 
                 losses = np.array([lmap[Dy.projection] for Dy in support], float)  # l(y)
                 #posterior = empdist.copy_posterior()  # p(y)
@@ -330,20 +298,30 @@ class Driver(object):
                 risk = losses.dot(posterior.transpose())
                 emp_risk.append(risk)
                 emp_dR.append(dR)
+                H.append(local_H)
+                dH.append(local_dH)
 
             obj, jac = np.mean(emp_risk, 0), np.mean(emp_dR, 0)
 
-            # r_weight
-            r_weight = self.args.riskreg
-            if r_weight != 0.0:  # regularised
-                regulariser = LA.norm(theta, 2)
-                r_obj = obj + r_weight * regulariser
-                r_jac = jac + 2 * r_weight * theta
-                logging.info('[%s] RISK=%f regularised=%f', run, obj, r_obj)
-                return r_obj, r_jac
-            else:
-                logging.info('[%s] RISK=%f', run, obj)
+            if Tp == 0.0 and l2_weight == 0.0:
+                logging.info('[%s] Risk=%f', run, obj)
                 return obj, jac
+            else:
+                r_obj = obj
+                r_jac = jac.copy()
+
+                if Tp != 0.0:  # H-regularised
+                    r_obj -= Tp * np.mean(H, 0)
+                    r_jac -= Tp * np.mean(dH, 0)
+                    logging.info('[%s] Risk=%f H-regularised=%f', run, obj, r_obj)
+
+                if l2_weight != 0.0:  # L2-regularised
+                    regulariser = LA.norm(theta, 2)
+                    r_obj += l2_weight * regulariser
+                    r_jac += 2 * l2_weight * theta
+                    logging.info('[%s] Risk=%f L2-regularised=%f', run, obj, r_obj)
+                
+                return r_obj, r_jac
 
         def callback(theta):
             logging.info('[%s] new theta: %s', run, npvec2str(theta))
@@ -355,26 +333,26 @@ class Driver(object):
                 method='L-BFGS-B', 
                 jac=True, 
                 callback=callback, 
-                options={'maxiter': self.args.rsgd[0],
-                    'ftol': 1e-4,
-                    'gtol': 1e-4,
-                    'maxfun': self.args.rsgd[1],
+                options={'maxiter': self.args.psgd[0],
+                    'ftol': self.args.ptol[0],
+                    'gtol': self.args.ptol[1],
+                    'maxfun': self.args.psgd[1],
                     'disp': False})
-        logging.info('[%s] Done!', run)
+        logging.info('[%d] Target SGD: function=%f nfev=%d nit=%d success=%s message="%s"', run.iteration, result.fun, result.nfev, result.nit, result.success, result.message)
         return result.x
     
-    def optimise_proxy(self, run, devset, S):
+    def optimise_proxy(self, run, devset, S, Tq, l2_weight):
         
-        if self.args.method == 'minkl':
+        if self.args.qopt == 'minkl':
             logging.info('[%s] Minimising KL divergence', run)
             get_obj_and_jac = optalg.minkl
             polarity = 1
-        elif self.args.method == 'maxelb':
+        elif self.args.qopt == 'maxelb':
             logging.info('[%s] Maximising ELB', run)
             get_obj_and_jac = optalg.maxelb
             polarity = -1
         else:
-            raise NotImplementedError('Unsupported optimisation method: %s', self.args.method)
+            raise NotImplementedError('Unsupported optimisation method: %s', self.args.qopt)
         #elif self.args == 'minvar': 
         #    pass
 
@@ -387,6 +365,8 @@ class Driver(object):
 
             OBJ = []
             JAC = []
+            H = []
+            dH = []
             for i, seg in enumerate(devset):
                 derivations = S[i]
                 #empdist = EmpiricalDistribution(derivations,
@@ -395,13 +375,15 @@ class Driver(object):
                 #                                empirical_q=False,  # crucial: the proposal is changing, thus we cannot rely on empirical estimates
                 #                                get_yield=lambda d: d.tree.projection)
 
-                local_obj, local_jac = get_obj_and_jac(derivations, q_wmap=self.wmap.proxy, p_wmap=self.wmap.target, empirical_q=False)
+                local_obj, local_jac, local_H, local_dH = get_obj_and_jac(derivations, q_wmap=self.wmap.proxy, p_wmap=self.wmap.target, empirical_q=False)
                 
                 #elb, delb = empdist.elb()
                 #kl, dkl = empdist.kl()
                 # TODO: min KL  or min - ELB (should be equivalent, shouldn't it?)
                 OBJ.append(local_obj)
                 JAC.append(local_jac)
+                H.append(local_H)
+                dH.append(local_dH)
                 #hq, dhq = empdist.Hq()
                 #H.append(hq)
                 #dH.append(dhq)
@@ -410,21 +392,25 @@ class Driver(object):
             if polarity != 1:
                 obj *= polarity
                 jac *= polarity
-            
-            #if self.args.temperature != 0.0:
-            #    obj -= T * np.mean(H, 0)
-            #    jac -= T * np.mean(dH, 0)
 
-            r_weight = self.args.klreg
-            if r_weight != 0.0:  # regularised
-                regulariser = LA.norm(theta, 2)
-                r_obj = obj + r_weight * regulariser
-                r_jac = jac + 2 * r_weight * theta
-                logging.info('[%s] O=%f regularised=%f', run, obj, r_obj)
-                return r_obj, r_jac
-            else:
+            if Tq == 0.0 and l2_weight == 0.0:
                 logging.info('[%s] O=%f', run, obj)
                 return obj, jac
+            else:
+                r_obj = obj
+                r_jac = jac.copy()
+
+                if Tq != 0.0:
+                    r_obj -= Tq * np.mean(H, 0)
+                    r_jac -= Tq * np.mean(dH, 0)
+                    logging.info('[%s] O=%f H-regularised=%f', run, obj, r_obj)
+
+                if l2_weight != 0.0:  # regularised
+                    regulariser = LA.norm(theta, 2)
+                    r_obj += l2_weight * regulariser
+                    r_jac += 2 * l2_weight * theta
+                    logging.info('[%s] O=%f L2-regularised=%f', run, obj, r_obj)
+                return r_obj, r_jac
             
 
         def callback(theta):
@@ -436,12 +422,12 @@ class Driver(object):
                 method='L-BFGS-B', 
                 jac=True, 
                 callback=callback, 
-                options={'maxiter': self.args.klsgd[0],
-                    'ftol': 1e-4,
-                    'gtol': 1e-4,
-                    'maxfun': self.args.klsgd[1],
+                options={'maxiter': self.args.qsgd[0],
+                    'ftol': self.args.qtol[0],
+                    'gtol': self.args.qtol[1],
+                    'maxfun': self.args.qsgd[1],
                     'disp': False})
-        logging.info('[%s] Done!', run)
+        logging.info('[%d] Proxy SGD: function=%f nfev=%d nit=%d success=%s message="%s"', run.iteration, result.fun, result.nfev, result.nit, result.success, result.message)
         return result.x
 
 
@@ -507,9 +493,9 @@ class Driver(object):
         return '{0}/config0.ini'.format(workspace)
 
     @staticmethod
-    def _PREPARE_DEVSET_(workspace, path, config, stem='dev', input_format='cdec', grammar_dir=None):
+    def _PREPARE_DEVSET_(workspace, path, config, alias='dev', input_format='cdec', grammar_dir=None):
         # load dev set and separate input and references
-        logging.info('Reading %s set: %s', stem, path)
+        logging.info('Reading %s set: %s', alias, path)
         if grammar_dir is None:
             if config.has_section('chisel:sampler'):
                 sampler_map = section_literal_eval(config.items('chisel:sampler'))
@@ -519,11 +505,11 @@ class Driver(object):
                                               input_format,
                                               grammar_dir=grammar_dir)
                         for sid, line in enumerate(f)]
-        logging.info('%d %s instances', len(devset), stem)
+        logging.info('%d %s instances', len(devset), alias)
 
         # dump source and references
-        with smart_wopen('{0}/{1}.input'.format(workspace, stem)) as fi:
-            with smart_wopen('{0}/{1}.refs'.format(workspace, stem)) as fr:
+        with smart_wopen('{0}/{1}.input'.format(workspace, alias)) as fi:
+            with smart_wopen('{0}/{1}.refs'.format(workspace, alias)) as fr:
                 for seg in devset:
                     print >> fi, seg.to_sgm(dump_refs=False)
                     print >> fr, ' ||| '.join(str(ref) for ref in seg.refs)
@@ -550,3 +536,163 @@ class Driver(object):
         logging.debug('chisel:metrics:config: %s', metrics_config)
         mteval.configure(metrics_config)
 
+    def devtest_eval(self, iteration):
+        """
+        Evaluation of devtest set always happens at end of iteration, thus we use the same config file.
+        """
+        self.sample(iteration, self.args.devtest_alias, config=iteration, grammar=self.args.devtest_grammar)
+        self.decide(iteration, self.args.devtest_alias, config=iteration)
+        return self.assess(iteration, self.args.devtest_alias)
+
+    def dev_eval(self, iteration):
+        """
+        Evaluation of dev set always happens at the beginning of iteration, thus we use the preceding config file.
+        """
+        self.decide(iteration, self.args.dev_alias, config=iteration - 1)
+        return self.assess(iteration, self.args.dev_alias)
+    
+    def sample(self, iteration, alias, config=None, grammar=None, extra_parameters=''):
+        """
+        Sample derivation for a certain set of segments.
+
+        :param iteration: current iteration (determines the run folder)
+        :param alias: alias of the set (determines the workspace)
+        :param config: the number of the configuration file to be used (if not given, we assume the same as iteration)
+            For example, sample(1, 'dev', 0)  will sample at the beginning of iteration 1 using config0.ini.
+            Alternatively, sample(1, 'devtest', 1) will sample at the end of iteration 1 using config1.ini.
+        :param grammar: path to a grammar (typically necessary when sampling for a devtest set)
+        :param extra_parameters: additional parameters to chisel.sampler
+        :returns: path to samples
+        """
+        # required options
+        if config is None:
+            config = iteration
+        options = {'config': '{0}/config{1}.ini'.format(self.workspace, config), 
+                'workspace': '{0}/run{1}/{2}'.format(self.workspace, iteration, alias)}
+        mkdir(options['workspace'])
+        # command line
+        cmd_str = 'python -m chisel.sampler %(config)s %(workspace)s' % options
+        # additional parameters including --grammar
+        if grammar is not None:
+            cmd_str = '{0} --grammar {1}'.format(cmd_str, grammar)
+        if extra_parameters:
+            cmd_str = '{0} {1}'.format(cmd_str, extra_parameters)
+        logging.debug('[%d] Run: %s', iteration, cmd_str)
+        # prepare args
+        cmd_args = shlex.split(cmd_str)
+        # sample
+        t0 = time()
+        logging.info('[%d] Sampling (%s)...', iteration, alias)
+        with smart_ropen('{0}/{1}.input'.format(self.workspace, alias)) as fi:
+            with smart_wopen(self.path_to_log('sampling-{0}'.format(alias), iteration)) as fo:
+                with smart_wopen(self.path_to_log('sampling-{0}'.format(alias), iteration, err=True)) as fe:
+                    proc = sp.Popen(cmd_args, stdin=fi, stdout=fo, stderr=fe)
+                    proc.wait()
+        dt = time() - t0
+        logging.info('[%d]  sampling took %f seconds', iteration, dt)
+        #if not self.check_samples(self.iteration):
+        #    raise Exception('chisel.sampler appears to have failed at iteration %d', run.iteration)
+        return '{0}/samples'.format(options['workspace'])
+    
+    def decide(self, iteration, alias, config=None, extra_parameters=''):
+        """
+        Apply a decision rule..
+
+        :param iteration: current iteration (determines the run folder)
+        :param alias: alias of the set (determines the workspace)
+        :param config: the number of the configuration file to be used (if not given, we assume the same as iteration)
+            For example, decide(1, 'dev', 0)  will decide from samples drawn at the beginning of iteration 1 using config0.ini.
+            Alternatively, decide(1, 'devtest', 1) will decide from sample drawn at the end of iteration 1 using config1.ini.
+        :param extra_parameters: additional parameters to chisel.fast_consensus
+        :returns: (path to ranked decisions, path to 1-best outputs)
+        """
+        if config is None:
+            config = iteration
+        # required options
+        options = {'config': '{0}/config{1}.ini'.format(self.workspace, config), 
+                'workspace': '{0}/run{1}/{2}'.format(self.workspace, iteration, alias)}
+        # command line
+        cmd_str = 'python -m chisel.fast_consensus %(config)s %(workspace)s ' % options
+        # additional parameters
+        if extra_parameters:
+            cmd_str = '{0} {1}'.format(cmd_str, extra_parameters)
+        logging.debug('[%d] Run: %s', iteration, cmd_str)
+        # perpare args
+        cmd_args = shlex.split(cmd_str)
+        # decide
+        t0 = time()
+        logging.info('[%d] Deciding (%s)...', iteration, alias)
+        with smart_wopen(self.path_to_log('decision-{0}'.format(alias), iteration)) as fo:
+            with smart_wopen(self.path_to_log('decision-{0}'.format(alias), iteration, err=True)) as fe:
+                proc = sp.Popen(cmd_args, stdin=None, stdout=fo, stderr=fe)
+                proc.wait()
+        dt = time() - t0
+        logging.info('[%d]  deciding took %f seconds', iteration, dt)
+        return '{0}/decisions'.format(options['workspace']), '{0}/output'.format(options['workspace'])
+    
+    def assess(self, iteration, alias):
+        # where samples, decisions and outputs can be found
+        workspace = '{0}/run{1}/{2}'.format(self.workspace, iteration, alias)
+        # command line
+        cmd_str = '{0} -r {1}'.format(self.args.scoring_tool, '{0}/{1}.refs'.format(self.workspace, alias))
+        logging.debug('[%d] Run: %s', iteration, cmd_str)
+        # prepare args
+        cmd_args = shlex.split(cmd_str)
+        # assess
+        t0 = time()
+        trans_path = '{0}/output/consensus-bleu'.format(workspace)
+        logging.info('[%d] Assessing (%s)...', iteration, alias)
+        score = None
+        with smart_ropen(trans_path) as fin:
+            bleu_out = '{0}.bleu.stdout'.format(splitext(trans_path)[0])
+            bleu_err = '{0}.bleu.stderr'.format(splitext(trans_path)[0])
+            with smart_wopen(bleu_out) as fout:
+                with smart_wopen(bleu_err) as ferr:
+                    # logging.info(cmd_args)
+                    proc = sp.Popen(cmd_args, stdin=fin, stdout=fout, stderr=ferr)
+                    proc.wait()
+                    try:
+                        with smart_ropen(bleu_out) as fi:
+                            line = next(fi)
+                            score = float(line.strip())
+                    except:
+                        logging.error('[%d] Problem reading %s for %s', iteration, bleu_out, alias)
+        dt = time() - t0
+        logging.info('[%d]  assessing took %f seconds', iteration, dt)
+        return score
+
+    def training_loss(self, iteration, alias, segments, samples):
+        L = []
+        loss_dir = '{0}/run{1}/loss'.format(iteration, alias)
+        mkdir(loss_dir)
+
+        logging.info('[%d] Computing loss (%s)...', iteration, alias)
+        t0 = time()
+        # run fast bleu implementation
+        # TODO: generalise to other metrics
+        for seg, derivations in zip(segments, samples):
+            projections = frozenset(d.tree.projection for d in derivations)
+            scorer = TrainingBLEU(seg.refs)
+            lmap = {y: scorer.loss(y.split()) for y in projections}
+            L.append(lmap)
+            if self.args.save_loss:
+                with smart_wopen('{0}/{1}.gz'.format(loss_dir, seg.id)) as fo:
+                    for d in derivations:
+                        fo.write('{0}\n'.format(lmap[d.tree.projection]))
+        dt = time() - t0
+        logging.info('[%d]  computing loos took %s seconds', iteration, dt)
+        return L
+
+    def read_samples(self, iteration, alias):
+        samples_dir = '{0}/run{1}/{2}/samples'.format(self.workspace, iteration, alias)
+        logging.info('[%d] Reading samples (%s)...', iteration, alias)
+        input_files = list_numbered_files(samples_dir)
+        S = []
+        t0 = time()
+        for fid, input_file in input_files:
+            logging.debug(' reading %s from %s', fid, input_file)
+            derivations, _qmap, _pmap = sampled_derivations_from_file(input_file)
+            S.append(derivations)
+        dt = time() - t0
+        logging.info('[%d]  reading samples took %f seconds', iteration, dt)
+        return S
