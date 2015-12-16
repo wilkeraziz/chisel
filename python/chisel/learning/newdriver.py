@@ -94,7 +94,10 @@ class Driver(object):
             self.devtest = Driver._PREPARE_DEVSET_(self.workspace, self.args.devtest, config, alias=self.args.devtest_alias, grammar_dir=args.devtest_grammar)
 
         Driver._LOAD_METRIC_(self.config, self.args.metric)
+        t0 = time()
         self.tune()
+        dt = time() - t0
+        logging.info('Optimisation took %s minutes', dt/60)
 
     def update_config_file(self, number, proxy_scaling=None, target_scaling=None, proxy=None, target=None):
         config = RawConfigParser()
@@ -218,6 +221,7 @@ class Driver(object):
 
         for loop in range(1, self.args.maxiter + 1):  
             run.next_run()
+            t0 = time()
             # deal with cooling schedule
             if pcooling <= 0:
                 Tp /= self.args.pcooling_factor  # cool down
@@ -265,6 +269,9 @@ class Driver(object):
             self.update_config_file(run.iteration - 1)
             devtest_score = self.devtest_eval(run.iteration)
             logging.info('[%d] Devtest eval (end of iteration): %s', run.iteration, devtest_score)
+            dt = time() - t0
+            logging.info('[%d] Iteration took %s minutes', iteration, dt/60)
+
 
     def optimise_target(self, run, devset, S, L, Tp, l2_weight):
                                                 
@@ -326,6 +333,7 @@ class Driver(object):
         def callback(theta):
             logging.info('[%s] new theta: %s', run, npvec2str(theta))
 
+        t0 = time()
         logging.info('[%s] Minimising risk', run)
         result = minimize(f, 
                 self.wmap.target.asarray, 
@@ -338,7 +346,9 @@ class Driver(object):
                     'gtol': self.args.ptol[1],
                     'maxfun': self.args.psgd[1],
                     'disp': False})
-        logging.info('[%d] Target SGD: function=%f nfev=%d nit=%d success=%s message="%s"', run.iteration, result.fun, result.nfev, result.nit, result.success, result.message)
+        dt = time() - t0
+        logging.info('[%d] Target SGD: function=%f nfev=%d nit=%d success=%s message="%s" minutes=%s', run.iteration, 
+                result.fun, result.nfev, result.nit, result.success, result.message, dt/60)
         return result.x
     
     def optimise_proxy(self, run, devset, S, Tq, l2_weight):
@@ -416,6 +426,7 @@ class Driver(object):
         def callback(theta):
             logging.info('[%s] new lambda: %s', run, npvec2str(theta))
 
+        t0 = time()
         result = minimize(f, 
                 self.wmap.proxy.asarray, 
                 #method='BFGS', 
@@ -427,7 +438,9 @@ class Driver(object):
                     'gtol': self.args.qtol[1],
                     'maxfun': self.args.qsgd[1],
                     'disp': False})
-        logging.info('[%d] Proxy SGD: function=%f nfev=%d nit=%d success=%s message="%s"', run.iteration, result.fun, result.nfev, result.nit, result.success, result.message)
+        dt = time() - t0
+        logging.info('[%d] Proxy SGD: function=%f nfev=%d nit=%d success=%s message="%s" minutes=%s', run.iteration, 
+                result.fun, result.nfev, result.nit, result.success, result.message, dt/60)
         return result.x
 
 
