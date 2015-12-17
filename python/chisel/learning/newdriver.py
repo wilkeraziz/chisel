@@ -9,7 +9,7 @@ import traceback
 import sys
 import numpy as np
 from numpy import linalg as LA
-from collections import namedtuple
+from collections import namedtuple, deque
 from multiprocessing import Pool
 from time import time, strftime
 from scipy.optimize import minimize
@@ -76,6 +76,8 @@ class Driver(object):
 
         self.args = args
         self.config = config
+        self.sampling_schedule = deque(self.args.samples)
+        self.sampling_schedule_iteration = 0
     
         self.alpha_p = 1.0 # 0.1
         self.alpha_q = 1.0 # 0.1
@@ -202,6 +204,24 @@ class Driver(object):
 
         return JointWMap(WMap(sorted(proxy_weights.iteritems(), key=lambda (k, v): k)),
                 WMap(sorted(target_weights.iteritems(), key=lambda (k, v): k)))
+
+    def get_nsamples(self, iteration):
+        if len(self.sampling_schedule) == 0:  # nothing in the schedule
+            return 1000  # we resort to a default parameter
+        elif len(self.sampling_schedule) == 1:  # a single value means keep on sampling this many derivations
+            return self.sampling_schedule[0]
+        else: # two or more
+            # the first parameter is the number of samples, the second how many iterations 
+            if self.sampling_schedule[1] > 0:   # for as long as we are meant to sample
+                if iteration > self.sampling_schedule_iteration:  # this is a new iteration
+                    self.sampling_schedule_iteration = iteration  # update progress
+                    self.sampling_schedule[1] -= 1                # discount one iteration
+                return self.sampling_schedule[0] 
+            else:  # times is zero
+                # remove the exhausted configuration from the schedule
+                self.sampling_schedule.popleft()
+                self.sampling_schedule.popleft()
+                return self.get_nsamples(iteration) # and try again
     
     def tune(self):
 
@@ -216,12 +236,14 @@ class Driver(object):
         
         # Iteration 0 consists in assessing devtest with the initial weight vector
         if self.args.resume == 0:
-            devtest_score = self.devtest_eval(run.iteration)
+            devtest_score = self.devtest_eval(run.iteration, samples=self.get_nsamples(0))
             logging.info('[%d] Devtest eval (initialiser): %s', run.iteration, devtest_score)
 
         for loop in range(1, self.args.maxiter + 1):  
             run.next_run()
             t0 = time()
+            # deal with sampling schedule
+            N = self.get_nsamples(run.iteration)
             # deal with cooling schedule
             if pcooling <= 0:
                 Tp /= self.args.pcooling_factor  # cool down
@@ -242,7 +264,7 @@ class Driver(object):
             path_to_run = '{0}/run{1}'.format(self.workspace, run.iteration)
             mkdir(path_to_run)
             # sample for dev (using the previous config file)
-            samples_dir = self.sample(run.iteration, self.args.dev_alias, config=run.iteration - 1)  
+            samples_dir = self.sample(run.iteration, self.args.dev_alias, config=run.iteration - 1, samples=N)  
             if not os.path.isdir(samples_dir):
                 raise Exception('[%d] could not find samples' % run.iteration)
             # eval dev set if necessary
@@ -267,7 +289,7 @@ class Driver(object):
                 self.wmap.target.update(target_weights)
             # update the config that precedes this run
             self.update_config_file(run.iteration - 1)
-            devtest_score = self.devtest_eval(run.iteration)
+            devtest_score = self.devtest_eval(run.iteration, samples=N)
             logging.info('[%d] Devtest eval (end of iteration): %s', run.iteration, devtest_score)
             dt = time() - t0
             logging.info('[%d] Iteration took %s minutes', run.iteration, dt/60)
@@ -549,11 +571,11 @@ class Driver(object):
         logging.debug('chisel:metrics:config: %s', metrics_config)
         mteval.configure(metrics_config)
 
-    def devtest_eval(self, iteration):
+    def devtest_eval(self, iteration, samples):
         """
         Evaluation of devtest set always happens at end of iteration, thus we use the same config file.
         """
-        self.sample(iteration, self.args.devtest_alias, config=iteration, grammar=self.args.devtest_grammar)
+        self.sample(iteration, self.args.devtest_alias, config=iteration, samples=samples, grammar=self.args.devtest_grammar)
         self.decide(iteration, self.args.devtest_alias, config=iteration)
         return self.assess(iteration, self.args.devtest_alias)
 
@@ -564,7 +586,7 @@ class Driver(object):
         self.decide(iteration, self.args.dev_alias, config=iteration - 1)
         return self.assess(iteration, self.args.dev_alias)
     
-    def sample(self, iteration, alias, config=None, grammar=None, extra_parameters=''):
+    def sample(self, iteration, alias, config=None, samples=1000, grammar=None, extra_parameters=''):
         """
         Sample derivation for a certain set of segments.
 
@@ -573,6 +595,7 @@ class Driver(object):
         :param config: the number of the configuration file to be used (if not given, we assume the same as iteration)
             For example, sample(1, 'dev', 0)  will sample at the beginning of iteration 1 using config0.ini.
             Alternatively, sample(1, 'devtest', 1) will sample at the end of iteration 1 using config1.ini.
+        :param samples: how samples to draw
         :param grammar: path to a grammar (typically necessary when sampling for a devtest set)
         :param extra_parameters: additional parameters to chisel.sampler
         :returns: path to samples
@@ -581,10 +604,11 @@ class Driver(object):
         if config is None:
             config = iteration
         options = {'config': '{0}/config{1}.ini'.format(self.workspace, config), 
-                'workspace': '{0}/run{1}/{2}'.format(self.workspace, iteration, alias)}
+                'workspace': '{0}/run{1}/{2}'.format(self.workspace, iteration, alias),
+                'samples': samples}
         mkdir(options['workspace'])
         # command line
-        cmd_str = 'python -m chisel.sampler %(config)s %(workspace)s' % options
+        cmd_str = 'python -m chisel.sampler %(config)s %(workspace)s --samples %(samples)d' % options
         # additional parameters including --grammar
         if grammar is not None:
             cmd_str = '{0} --grammar {1}'.format(cmd_str, grammar)
@@ -595,10 +619,11 @@ class Driver(object):
         cmd_args = shlex.split(cmd_str)
         # sample
         t0 = time()
-        logging.info('[%d] Sampling (%s)...', iteration, alias)
+        logging.info('[%d] Sampling %d solutions (%s)...', iteration, samples, alias)
         with smart_ropen('{0}/{1}.input'.format(self.workspace, alias)) as fi:
             with smart_wopen(self.path_to_log('sampling-{0}'.format(alias), iteration)) as fo:
                 with smart_wopen(self.path_to_log('sampling-{0}'.format(alias), iteration, err=True)) as fe:
+                    fe.write('{0}\n'.format(cmd_str))
                     proc = sp.Popen(cmd_args, stdin=fi, stdout=fo, stderr=fe)
                     proc.wait()
         dt = time() - t0

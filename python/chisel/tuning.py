@@ -13,34 +13,21 @@ from chisel.util.config import section_literal_eval, configure
 def main(args, config):
     driver = Driver(*argparse_and_config())
 
-
-def argparse_and_config():
-    parser = argparse.ArgumentParser(description='Tuning',
-                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-
-    parser.add_argument('config', type=str, help="configuration file")
-    parser.add_argument("workspace",
-                        type=str, default=None,
-                        help="where samples can be found and where decisions are placed")
-    parser.add_argument("dev", type=str,
-                        help="development set")
-    parser.add_argument('--dev-alias', type=str, default='dev',
-            help='Change the alias of the dev set')
-    parser.add_argument('--no-eval-dev', action='store_true', default=False,
-            help='Do not assess the dev set at the beginning of an iteration')
-    parser.add_argument("--resume", type=int, default=0,
-                        help="Resume from a certain iteration (requires the config file of the preceding run)")
-    parser.add_argument("--metric", type=str, default='bleu',
-                        help="similarity function")
-    parser.add_argument("--maxiter", '-M', type=int, default=10,
-                        help="Maximum number of iterations")
-    parser.add_argument('--samples', type=int, default=1000, # nargs='+', default=[1000],
-            help='Sampling schedule: number of samples and number of iterations (multiple allowed)')
+def cmd_optimisation(parser):
     # Optimisation
+    parser.add_argument('--default', type=float, default=None,
+                        help='initialise all weights with a default value, if not given, we start from the values already specified in the config file')
     parser.add_argument("--order", type=str, default='pq', choices=['pq', 'qp'],
             help="Order in which to optimise parameters: p then q, or q then p")
     parser.add_argument("--qopt", type=str, default='minkl', choices=['minkl', 'maxelb', 'minvar'],
                         help="Optimisation method for instrumental distribution")
+
+def cmd_external(parser):
+    parser.add_argument('--scoring-tool', type=str,
+            default='/Users/waziz/workspace/github/cdec/mteval/fast_score',
+            help='a scoring tool such as fast_score')
+
+def cmd_target_sgd(parser):
     # SGD target
     parser.add_argument("--psgd", type=int, nargs=2, default=[10, 20],
                         help="Number of iterations and function evaluations for target optimisation")
@@ -56,6 +43,8 @@ def argparse_and_config():
             help="Cooling factor in target optimisation")
     parser.add_argument("--pcooling-lag", type=int, default=1,
             help="Number of iterations between cooling in target optimisation")
+
+def cmd_instrumental_sgd(parser):
     # SGD proxy
     parser.add_argument("--qsgd", type=int, nargs=2, default=[5, 10],
                         help="Number of iterations and function evaluations for proxy optimisation")
@@ -71,30 +60,58 @@ def argparse_and_config():
             help="Cooling factor in proxy optimisation")
     parser.add_argument("--qcooling-lag", type=int, default=1,
             help="Number of iterations between cooling in proxy optimisation")
-    # General
+
+def cmd_loss(parser):
+    parser.add_argument("--metric", type=str, default='bleu',
+                        help="similarity function")
+    parser.add_argument('--consensus',
+                        action='store_true',
+                        help='consensus training instead of MBR training')
+
+def cmd_logging(parser):
+    parser.add_argument('--save-loss',
+                        action='store_true',
+                        help='Store sample loss at every iteration')
+    parser.add_argument('--verbose', '-v',
+                        action='count',
+                        help='increase the verbosity level')
+
+def argparse_and_config():
+    parser = argparse.ArgumentParser(description='Tuning',
+                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+
+    parser.add_argument('config', type=str, help="configuration file")
+    parser.add_argument("workspace",
+                        type=str, default=None,
+                        help="where samples can be found and where decisions are placed")
+    parser.add_argument("dev", type=str,
+                        help="development set")
+    parser.add_argument("--alias", type=str,
+                        help="an alias for the experiment")
+    parser.add_argument("--maxiter", '-M', type=int, default=10,
+                        help="Maximum number of iterations")
+    parser.add_argument('--samples', type=int, nargs='+', default=[1000],
+            help='Sampling schedule: number of samples and number of iterations (multiple allowed)')
     parser.add_argument("--jobs", type=int, default=2, help="number of processes")
+    parser.add_argument("--resume", type=int, default=0,
+                        help="Resume from a certain iteration (requires the config file of the preceding run)")
+    parser.add_argument('--dev-alias', type=str, default='dev',
+            help='Change the alias of the dev set')
+    parser.add_argument('--no-eval-dev', action='store_true', default=False,
+            help='Do not assess the dev set at the beginning of an iteration')
     parser.add_argument("--devtest", type=str,
                         help="devtest set")
     parser.add_argument('--devtest-alias', type=str, default='devtest',
             help='Change the alias of the devtest set')
     parser.add_argument("--devtest-grammar", type=str,
                         help="grammars for the devtest set")
-    parser.add_argument("--alias", type=str,
-                        help="an alias for the experiment")
-    parser.add_argument('--default', type=float, default=None,
-                        help='initialise all weights with a default value, if not given, we start from the values already specified in the config file')
-    parser.add_argument('--consensus',
-                        action='store_true',
-                        help='consensus training instead of MBR training')
-    parser.add_argument('--save-loss',
-                        action='store_true',
-                        help='Store sample loss at every iteration')
-    parser.add_argument('--scoring-tool', type=str,
-            default='/Users/waziz/workspace/github/cdec/mteval/fast_score',
-            help='a scoring tool such as fast_score')
-    parser.add_argument('--verbose', '-v',
-                        action='count',
-                        help='increase the verbosity level')
+    cmd_loss(parser.add_argument_group('Loss'))
+    cmd_optimisation(parser.add_argument_group('Parameter optimisation'))
+    cmd_target_sgd(parser.add_argument_group('Target distribution'))
+    cmd_instrumental_sgd(parser.add_argument_group('Instrumental distribution'))
+    cmd_external(parser.add_argument_group('External tools'))
+    cmd_logging(parser.add_argument_group('Logging'))
+    # General
 
     args, config, failed = configure(parser,
                                      set_defaults=['chisel:model', 'chisel:learning'],
@@ -107,7 +124,7 @@ def argparse_and_config():
    
     # reconfig based on command line overrides
     # 1) samples
-    config.set('chisel:sampler', 'samples', repr(args.samples))
+    # config.set('chisel:sampler', 'samples', repr(args.samples))
     config.set('chisel:sampler', 'jobs', repr(args.jobs))
     # 2) decision
     config.set('chisel:decision', 'metric', repr(args.metric))
