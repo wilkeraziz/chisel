@@ -270,7 +270,7 @@ class Driver(object):
             devtest_score = self.devtest_eval(run.iteration)
             logging.info('[%d] Devtest eval (end of iteration): %s', run.iteration, devtest_score)
             dt = time() - t0
-            logging.info('[%d] Iteration took %s minutes', iteration, dt/60)
+            logging.info('[%d] Iteration took %s minutes', run.iteration, dt/60)
 
 
     def optimise_target(self, run, devset, S, L, Tp, l2_weight):
