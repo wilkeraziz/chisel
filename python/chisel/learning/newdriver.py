@@ -701,8 +701,10 @@ class Driver(object):
 
     def training_loss(self, iteration, alias, segments, samples):
         L = []
-        loss_dir = '{0}/run{1}/loss'.format(iteration, alias)
-        mkdir(loss_dir)
+
+        if self.args.save_loss:
+            loss_dir = '{0}/run{1}/loss'.format(self.workspace, iteration, alias)
+            mkdir(loss_dir)
 
         logging.info('[%d] Computing loss (%s)...', iteration, alias)
         t0 = time()
