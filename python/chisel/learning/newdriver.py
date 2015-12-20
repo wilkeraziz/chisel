@@ -345,7 +345,7 @@ class Driver(object):
                     logging.info('[%s] Risk=%f H-regularised=%f', run, obj, r_obj)
 
                 if l2_weight != 0.0:  # L2-regularised
-                    regulariser = LA.norm(theta, 2)
+                    regulariser = LA.norm(theta, 2) ** 2
                     r_obj += l2_weight * regulariser
                     r_jac += 2 * l2_weight * theta
                     logging.info('[%s] Risk=%f L2-regularised=%f', run, obj, r_obj)
@@ -438,7 +438,7 @@ class Driver(object):
                     logging.info('[%s] O=%f H-regularised=%f', run, obj, r_obj)
 
                 if l2_weight != 0.0:  # regularised
-                    regulariser = LA.norm(theta, 2)
+                    regulariser = LA.norm(theta, 2) ** 2
                     r_obj += l2_weight * regulariser
                     r_jac += 2 * l2_weight * theta
                     logging.info('[%s] O=%f L2-regularised=%f', run, obj, r_obj)
