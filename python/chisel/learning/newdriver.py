@@ -32,28 +32,40 @@ MTEvalHyp = namedtuple('MTEvalHyp', ['projection', 'leaves'])
 
 class RunCount(object):
 
-    def __init__(self, run=0, risk=0, kl=0):
+    def __init__(self, run=0, target=0, proxy=0, targetsgd=0, proxysgd=0):
         self.run = run
-        self.risk = risk
-        self.kl = kl
+        self.target = target
+        self.proxy = proxy
+        self.targetsgd = targetsgd
+        self.proxysgd = proxysgd
 
     def __str__(self):
-        return '{0}/{1}/{2}'.format(self.run, self.risk, self.kl)
+        return 'I={0}/P={1}:{2}/Q={3}:{4}'.format(self.run, self.target, self.targetsgd, self.proxy, self.proxysgd)
 
     @property
     def iteration(self):
         return self.run
 
-    def next_risk(self):
-        self.risk += 1
+    def next_target(self):
+        self.target += 1
+        self.targetsgd = 0
 
-    def next_kl(self):
-        self.kl += 1
+    def next_proxy(self):
+        self.proxy += 1
+        self.proxysgd = 0
+    
+    def next_targetsgd(self):
+        self.targetsgd += 1
+
+    def next_proxysgd(self):
+        self.proxysgd += 1
 
     def next_run(self):
         self.run += 1
-        self.risk = 0
-        self.kl = 0
+        self.target = 0
+        self.proxy = 0
+        self.targetsgd = 0
+        self.proxysgd = 0
 
 def mkdir(path):
     if not os.path.exists(path):
@@ -87,7 +99,7 @@ class Driver(object):
             self.wmap = Driver._START_MODEL_(self.config, default=self.args.default)
             Driver._BASE_CONFIG_(self.config, self.workspace, self.wmap.proxy, self.wmap.target)
         else:
-            logging.info('Loading model %s', '{0}/config{1}.ini'.format(self.workspace, args.resume - 1))
+            logging.info('Loading model %s', '{1}/config{1}.ini'.format(self.workspace, args.resume - 1))
             self.wmap = self.configure('{0}/config{1}.ini'.format(self.workspace, args.resume - 1))
 
         self.devset = Driver._PREPARE_DEVSET_(self.workspace, self.args.dev, config, alias=self.args.dev_alias)
@@ -101,14 +113,14 @@ class Driver(object):
         dt = time() - t0
         logging.info('Optimisation took %s minutes', dt/60)
 
-    def update_config_file(self, number, proxy_scaling=None, target_scaling=None, proxy=None, target=None):
+    def update_config_file(self, before, after, proxy_scaling=None, target_scaling=None, proxy=None, target=None):
         config = RawConfigParser()
         config.optionxform = str
         
         try:
-            config.read('{0}/config{1}.ini'.format(self.workspace, number))
+            config.read('{0}/{1}'.format(self.workspace, before))
         except IOError as e:
-            logging.error('Perhaps iteration %d did not complete successfully', number)
+            logging.error('Perhaps iteration %s did not complete successfully', before)
             raise e
 
         if proxy_scaling is not None:
@@ -125,61 +137,13 @@ class Driver(object):
         else:
             [config.set('target', f, v) for f, v in target.iteritems()]
     
-        with smart_wopen('{0}/config{1}.ini'.format(self.workspace, number + 1)) as fo:
+        config_path = '{0}/{1}'.format(self.workspace, after)
+        with smart_wopen(config_path) as fo:
             config.write(fo)
+        return config_path
     
     def path_to_log(self, source, iteration, err=False):
-        return '{0}/log/{1}.{2}.std{3}'.format(self.workspace, source, iteration, 'err' if err else 'out')
-    
-    def mteval(self, iteration):
-        # sample
-        options = {'config': '{0}/config{1}.ini'.format(self.workspace, iteration), 
-                'workspace': '{0}/run{1}/devtest'.format(self.workspace, iteration)}
-        mkdir(options['workspace'])
-        cmd_str = 'python -m chisel.sampler %(config)s %(workspace)s' % options
-        if self.args.devtest_grammar:
-            cmd_str = '{0} --grammar {1}'.format(cmd_str, self.args.devtest_grammar)
-        cmd_args = shlex.split(cmd_str)
-        t0 = time()
-        logging.info('[%d] Sampling (devtest)...', iteration)
-        with smart_ropen('{0}/devtest.input'.format(self.workspace)) as fi:
-            with smart_wopen(self.path_to_log('sampling-devtest', iteration)) as fo:
-                with smart_wopen(self.path_to_log('sampling-devtest', iteration, err=True)) as fe:
-                    proc = sp.Popen(cmd_args, stdin=fi, stdout=fo, stderr=fe)
-                    proc.wait()
-        dt = time() - t0
-        logging.info('[%d] sampling took %f seconds', iteration, dt)
-        # decision rule
-        cmd_str = 'python -m chisel.fast_consensus %(config)s %(workspace)s ' % options
-        logging.info('[%d] deciding (devtest): %s', iteration, cmd_str)
-        cmd_args = shlex.split(cmd_str)
-        t0 = time()
-        with smart_wopen(self.path_to_log('decision-devtest', iteration)) as fo:
-            with smart_wopen(self.path_to_log('decision-devtest', iteration, err=True)) as fe:
-                proc = sp.Popen(cmd_args, stdin=None, stdout=fo, stderr=fe)
-                proc.wait()
-        dt = time() - t0
-        logging.info('[%d] deciding took %f seconds', iteration, dt)
-        # mt eval
-        cmd_str = '{0} -r {1}'.format(self.args.scoring_tool, '{0}/devtest.refs'.format(self.workspace))
-        cmd_args = shlex.split(cmd_str)
-        trans_path = '{0}/output/consensus-bleu'.format(options['workspace'])
-        with smart_ropen(trans_path) as fin:
-            bleu_out = '{0}.bleu.stdout'.format(splitext(trans_path)[0])
-            bleu_err = '{0}.bleu.stderr'.format(splitext(trans_path)[0])
-            with smart_wopen(bleu_out) as fout:
-                with smart_wopen(bleu_err) as ferr:
-                    # logging.info(cmd_args)
-                    proc = sp.Popen(cmd_args, stdin=fin, stdout=fout, stderr=ferr)
-                    proc.wait()
-                    try:
-                        with smart_ropen(bleu_out) as fi:
-                            line = next(fi)
-                            return float(line.strip())
-                    except:
-                        logging.error('Problem reading %s', bleu_out)
-        return None
-
+        return '{0}/log/{1}.{2}.std{3}'.format(self.workspace, source, str(iteration).replace('/', '_'), 'err' if err else 'out')
     
     def configure(self, path):
         """
@@ -190,6 +154,8 @@ class Driver(object):
         # load a given configuration file (with weights)
         config = RawConfigParser()
         config.optionxform = str
+        if not os.path.exists(path):
+            raise IOError('Config file not found: %s\nPerhaps you used --resume incorrectly?' % path)
         try:
             config.read(path)
         except IOError as e:
@@ -223,114 +189,34 @@ class Driver(object):
                 self.sampling_schedule.popleft()
                 return self.get_nsamples(iteration) # and try again
     
-    def tune(self):
-
-        metric = self.args.metric
-        devset = self.devset
-    
-        run = RunCount()
-        Tp = self.args.Tp
-        Tq = self.args.Tq
-        pcooling = self.args.pcooling_lag
-        qcooling = self.args.qcooling_lag
-        
-        # Iteration 0 consists in assessing devtest with the initial weight vector
-        if self.args.resume == 0:
-            devtest_score = self.devtest_eval(run.iteration, samples=self.get_nsamples(0))
-            logging.info('[%d] Devtest eval (initialiser): %s', run.iteration, devtest_score)
-
-        for loop in range(1, self.args.maxiter + 1):  
-            run.next_run()
-            t0 = time()
-            # deal with sampling schedule
-            N = self.get_nsamples(run.iteration)
-            # deal with cooling schedule
-            if pcooling <= 0:
-                Tp /= self.args.pcooling_factor  # cool down
-                if Tp < self.args.minTp:  # ensure minimum temperature
-                    Tp = self.args.minTp
-                pcooling = self.args.pcooling_lag  # reset lag
-            pcooling -= 1
-            if qcooling <= 0:
-                Tq /= self.args.qcooling_factor  # cool down
-                if Tq < self.args.minTq:  # ensure minimum temperature
-                    Tq = self.args.minTq  
-                qcooling = self.args.qcooling_lag  # reset lag
-            qcooling -= 1
-            logging.info('[%d] Tp=%s Tq=%s', run.iteration, Tp, Tq)
-            # skip complete iterations
-            if loop < self.args.resume:
-                continue
-            path_to_run = '{0}/run{1}'.format(self.workspace, run.iteration)
-            mkdir(path_to_run)
-            # sample for dev (using the previous config file)
-            samples_dir = self.sample(run.iteration, self.args.dev_alias, config=run.iteration - 1, samples=N)  
-            if not os.path.isdir(samples_dir):
-                raise Exception('[%d] could not find samples' % run.iteration)
-            # eval dev set if necessary
-            if not self.args.no_eval_dev:
-                self.decide(run.iteration, self.args.dev_alias, config=run.iteration - 1)
-                dev_score = self.assess(run.iteration, self.args.dev_alias)
-                logging.info('[%d] Dev eval (begin of iteration): %s', run.iteration, dev_score)
-            # load samples for optimisation
-            S = self.read_samples(run.iteration, self.args.dev_alias)
-            # compute loss
-            L = self.training_loss(run.iteration, self.args.dev_alias, segments=devset, samples=S)
-            # tuning iteration
-            if self.args.order == 'pq':
-                target_weights = self.optimise_target(run, devset, S, L, Tp, self.args.pL2)
-                self.wmap.target.update(target_weights)
-                proxy_weights = self.optimise_proxy(run, devset, S, Tq, self.args.qL2)
-                self.wmap.proxy.update(proxy_weights)
-            else:
-                proxy_weights = self.optimise_proxy(run, devset, S, Tq, self.args.qL2)
-                self.wmap.proxy.update(proxy_weights)
-                target_weights = self.optimise_target(run, devset, S, L, Tp, self.args.pL2)
-                self.wmap.target.update(target_weights)
-            # update the config that precedes this run
-            self.update_config_file(run.iteration - 1)
-            devtest_score = self.devtest_eval(run.iteration, samples=N)
-            logging.info('[%d] Devtest eval (end of iteration): %s', run.iteration, devtest_score)
-            dt = time() - t0
-            logging.info('[%d] Iteration took %s minutes', run.iteration, dt/60)
-
-
     def optimise_target(self, run, devset, S, L, Tp, l2_weight):
                                                 
         def f(theta):
 
-            run.next_risk()
+            run.next_targetsgd()
             
             self.wmap.target.update(theta)
             logging.info('[%s] theta=%s', run, npvec2str(theta))
 
-            emp_risk = []
-            emp_dR = []
+            R = []
+            dR = []
             H = []
             dH = []
             for i, seg in enumerate(devset):
                 derivations = S[i]
                 lmap = L[i]
-                #empdist = EmpiricalDistribution(derivations,
-                #                                q_wmap=self.wmap.proxy,
-                #                                p_wmap=self.wmap.target,
-                #                                empirical_q=True,  # crucial: the proposal is fixed, thus we can rely on empirical estimates
-                #                                get_yield=lambda d: d.tree.projection)
-                support, posterior, dP, local_H, local_dH = optalg.minrisk(derivations, 
-                        q_wmap=self.wmap.proxy, p_wmap=self.wmap.target, 
-                        empirical_q=True, get_yield=lambda d: d.tree.projection)
+                local_R, local_dR, local_H, local_dH = optalg.minrisk(derivations, 
+                        q_wmap=self.wmap.proxy, 
+                        p_wmap=self.wmap.target, 
+                        lmap=lmap,
+                        empirical_q=True)
 
-                losses = np.array([lmap[Dy.projection] for Dy in support], float)  # l(y)
-                #posterior = empdist.copy_posterior()  # p(y)
-                #dP = empdist.copy_dpdt() #  dp(y)/dt
-                dR = losses.dot(dP) 
-                risk = losses.dot(posterior.transpose())
-                emp_risk.append(risk)
-                emp_dR.append(dR)
+                R.append(local_R)
+                dR.append(local_dR)
                 H.append(local_H)
                 dH.append(local_dH)
 
-            obj, jac = np.mean(emp_risk, 0), np.mean(emp_dR, 0)
+            obj, jac = np.mean(R, 0), np.mean(dR, 0)
 
             if Tp == 0.0 and l2_weight == 0.0:
                 logging.info('[%s] Risk=%f', run, obj)
@@ -373,25 +259,25 @@ class Driver(object):
                 result.fun, result.nfev, result.nit, result.success, result.message, dt/60)
         return result.x
     
-    def optimise_proxy(self, run, devset, S, Tq, l2_weight):
+    def optimise_proxy(self, run, devset, S, L, Tq, l2_weight, N):
         
+        polarity = 1.0
         if self.args.qopt == 'minkl':
             logging.info('[%s] Minimising KL divergence', run)
             get_obj_and_jac = optalg.minkl
-            polarity = 1
         elif self.args.qopt == 'maxelb':
             logging.info('[%s] Maximising ELB', run)
             get_obj_and_jac = optalg.maxelb
-            polarity = -1
+            polarity = -1.0
+        elif self.args.qopt == 'minvar':
+            logging.info('[%s] Minimising variance of IS', run)
+            get_obj_and_jac = optalg.minvar
         else:
             raise NotImplementedError('Unsupported optimisation method: %s', self.args.qopt)
-        #elif self.args == 'minvar': 
-        #    pass
-
                                                 
         def f(theta):
 
-            run.next_kl()
+            run.next_proxysgd()
             self.wmap.proxy.update(theta)
             logging.info('[%s] lambda=%s', run, npvec2str(theta))
 
@@ -401,24 +287,17 @@ class Driver(object):
             dH = []
             for i, seg in enumerate(devset):
                 derivations = S[i]
-                #empdist = EmpiricalDistribution(derivations,
-                #                                q_wmap=self.wmap.proxy,
-                #                                p_wmap=self.wmap.target,
-                #                                empirical_q=False,  # crucial: the proposal is changing, thus we cannot rely on empirical estimates
-                #                                get_yield=lambda d: d.tree.projection)
-
-                local_obj, local_jac, local_H, local_dH = get_obj_and_jac(derivations, q_wmap=self.wmap.proxy, p_wmap=self.wmap.target, empirical_q=False)
+                lmap = L[i]
+                local_obj, local_jac, local_H, local_dH = get_obj_and_jac(derivations, 
+                        q_wmap=self.wmap.proxy, 
+                        p_wmap=self.wmap.target, 
+                        lmap=lmap,
+                        empirical_q=False)
                 
-                #elb, delb = empdist.elb()
-                #kl, dkl = empdist.kl()
-                # TODO: min KL  or min - ELB (should be equivalent, shouldn't it?)
                 OBJ.append(local_obj)
                 JAC.append(local_jac)
                 H.append(local_H)
                 dH.append(local_dH)
-                #hq, dhq = empdist.Hq()
-                #H.append(hq)
-                #dH.append(dhq)
 
             obj, jac = np.mean(OBJ, 0), np.mean(JAC, 0)
             if polarity != 1:
@@ -461,7 +340,7 @@ class Driver(object):
                     'maxfun': self.args.qsgd[1],
                     'disp': False})
         dt = time() - t0
-        logging.info('[%d] Proxy SGD: function=%f nfev=%d nit=%d success=%s message="%s" minutes=%s', run.iteration, 
+        logging.info('[%d] Proxy SGD: function=%f nfev=%d nit=%d success=%s message="%s" minutes=%s', run.iteration,  
                 result.fun, result.nfev, result.nit, result.success, result.message, dt/60)
         return result.x
 
@@ -575,22 +454,21 @@ class Driver(object):
         """
         Evaluation of devtest set always happens at end of iteration, thus we use the same config file.
         """
-        self.sample(iteration, self.args.devtest_alias, config=iteration, samples=samples, grammar=self.args.devtest_grammar)
-        self.decide(iteration, self.args.devtest_alias, config=iteration)
-        return self.assess(iteration, self.args.devtest_alias)
+        self.sample('run{0}'.format(iteration), 
+                self.args.devtest_alias, 
+                config='config{0}.ini'.format(iteration), 
+                samples=samples, 
+                grammar=self.args.devtest_grammar)
+        self.decide('run{0}'.format(iteration), 
+                self.args.devtest_alias, 
+                config='config{0}.ini'.format(iteration))
+        return self.assess('run{0}'.format(iteration), self.args.devtest_alias)
 
-    def dev_eval(self, iteration):
-        """
-        Evaluation of dev set always happens at the beginning of iteration, thus we use the preceding config file.
-        """
-        self.decide(iteration, self.args.dev_alias, config=iteration - 1)
-        return self.assess(iteration, self.args.dev_alias)
-    
-    def sample(self, iteration, alias, config=None, samples=1000, grammar=None, extra_parameters=''):
+    def sample(self, run, alias, config, samples=1000, grammar=None, extra_parameters=''):
         """
         Sample derivation for a certain set of segments.
 
-        :param iteration: current iteration (determines the run folder)
+        :param workspace: workspace
         :param alias: alias of the set (determines the workspace)
         :param config: the number of the configuration file to be used (if not given, we assume the same as iteration)
             For example, sample(1, 'dev', 0)  will sample at the beginning of iteration 1 using config0.ini.
@@ -600,11 +478,8 @@ class Driver(object):
         :param extra_parameters: additional parameters to chisel.sampler
         :returns: path to samples
         """
-        # required options
-        if config is None:
-            config = iteration
-        options = {'config': '{0}/config{1}.ini'.format(self.workspace, config), 
-                'workspace': '{0}/run{1}/{2}'.format(self.workspace, iteration, alias),
+        options = {'config': '{0}/{1}'.format(self.workspace, config), 
+                'workspace': '{0}/{1}/{2}'.format(self.workspace, run, alias),
                 'samples': samples}
         mkdir(options['workspace'])
         # command line
@@ -614,25 +489,23 @@ class Driver(object):
             cmd_str = '{0} --grammar {1}'.format(cmd_str, grammar)
         if extra_parameters:
             cmd_str = '{0} {1}'.format(cmd_str, extra_parameters)
-        logging.debug('[%d] Run: %s', iteration, cmd_str)
+        logging.debug('[%s] Run: %s', run, cmd_str)
         # prepare args
         cmd_args = shlex.split(cmd_str)
         # sample
         t0 = time()
-        logging.info('[%d] Sampling %d solutions (%s)...', iteration, samples, alias)
+        logging.info('[%s] Sampling %d solutions (%s)...', run, samples, alias)
         with smart_ropen('{0}/{1}.input'.format(self.workspace, alias)) as fi:
-            with smart_wopen(self.path_to_log('sampling-{0}'.format(alias), iteration)) as fo:
-                with smart_wopen(self.path_to_log('sampling-{0}'.format(alias), iteration, err=True)) as fe:
+            with smart_wopen(self.path_to_log('sampling-{0}'.format(alias), run)) as fo:
+                with smart_wopen(self.path_to_log('sampling-{0}'.format(alias), run, err=True)) as fe:
                     fe.write('{0}\n'.format(cmd_str))
                     proc = sp.Popen(cmd_args, stdin=fi, stdout=fo, stderr=fe)
                     proc.wait()
         dt = time() - t0
-        logging.info('[%d]  sampling took %f seconds', iteration, dt)
-        #if not self.check_samples(self.iteration):
-        #    raise Exception('chisel.sampler appears to have failed at iteration %d', run.iteration)
+        logging.info('[%s]  sampling took %f seconds', run, dt)
         return '{0}/samples'.format(options['workspace'])
     
-    def decide(self, iteration, alias, config=None, extra_parameters=''):
+    def decide(self, run, alias, config, extra_parameters=''):
         """
         Apply a decision rule..
 
@@ -644,42 +517,40 @@ class Driver(object):
         :param extra_parameters: additional parameters to chisel.fast_consensus
         :returns: (path to ranked decisions, path to 1-best outputs)
         """
-        if config is None:
-            config = iteration
         # required options
-        options = {'config': '{0}/config{1}.ini'.format(self.workspace, config), 
-                'workspace': '{0}/run{1}/{2}'.format(self.workspace, iteration, alias)}
+        options = {'config': '{0}/{1}'.format(self.workspace, config), 
+                'workspace': '{0}/{1}/{2}'.format(self.workspace, run, alias)}
         # command line
         cmd_str = 'python -m chisel.fast_consensus %(config)s %(workspace)s ' % options
         # additional parameters
         if extra_parameters:
             cmd_str = '{0} {1}'.format(cmd_str, extra_parameters)
-        logging.debug('[%d] Run: %s', iteration, cmd_str)
+        logging.debug('[%s] Run: %s', run, cmd_str)
         # perpare args
         cmd_args = shlex.split(cmd_str)
         # decide
         t0 = time()
-        logging.info('[%d] Deciding (%s)...', iteration, alias)
-        with smart_wopen(self.path_to_log('decision-{0}'.format(alias), iteration)) as fo:
-            with smart_wopen(self.path_to_log('decision-{0}'.format(alias), iteration, err=True)) as fe:
+        logging.info('[%s] Deciding (%s)...', run, alias)
+        with smart_wopen(self.path_to_log('decision-{0}'.format(alias), run)) as fo:
+            with smart_wopen(self.path_to_log('decision-{0}'.format(alias), run, err=True)) as fe:
                 proc = sp.Popen(cmd_args, stdin=None, stdout=fo, stderr=fe)
                 proc.wait()
         dt = time() - t0
-        logging.info('[%d]  deciding took %f seconds', iteration, dt)
+        logging.info('[%s]  deciding took %f seconds', run, dt)
         return '{0}/decisions'.format(options['workspace']), '{0}/output'.format(options['workspace'])
     
-    def assess(self, iteration, alias):
+    def assess(self, run, alias):
         # where samples, decisions and outputs can be found
-        workspace = '{0}/run{1}/{2}'.format(self.workspace, iteration, alias)
+        workspace = '{0}/{1}/{2}'.format(self.workspace, run, alias)
         # command line
         cmd_str = '{0} -r {1}'.format(self.args.scoring_tool, '{0}/{1}.refs'.format(self.workspace, alias))
-        logging.debug('[%d] Run: %s', iteration, cmd_str)
+        logging.debug('[%s] Run: %s', run, cmd_str)
         # prepare args
         cmd_args = shlex.split(cmd_str)
         # assess
         t0 = time()
         trans_path = '{0}/output/consensus-bleu'.format(workspace)
-        logging.info('[%d] Assessing (%s)...', iteration, alias)
+        logging.info('[%s] Assessing (%s)...', run, alias)
         score = None
         with smart_ropen(trans_path) as fin:
             bleu_out = '{0}.bleu.stdout'.format(splitext(trans_path)[0])
@@ -694,19 +565,19 @@ class Driver(object):
                             line = next(fi)
                             score = float(line.strip())
                     except:
-                        logging.error('[%d] Problem reading %s for %s', iteration, bleu_out, alias)
+                        logging.error('[%s] Problem reading %s for %s', run, bleu_out, alias)
         dt = time() - t0
-        logging.info('[%d]  assessing took %f seconds', iteration, dt)
+        logging.info('[%s]  assessing took %f seconds', run, dt)
         return score
 
-    def training_loss(self, iteration, alias, segments, samples):
+    def training_loss(self, run, alias, segments, samples):
         L = []
 
         if self.args.save_loss:
-            loss_dir = '{0}/run{1}/loss'.format(self.workspace, iteration, alias)
+            loss_dir = '{0}/{1}/loss'.format(self.workspace, run, alias)
             mkdir(loss_dir)
 
-        logging.info('[%d] Computing loss (%s)...', iteration, alias)
+        logging.info('[%s] Computing loss (%s)...', run, alias)
         t0 = time()
         # run fast bleu implementation
         # TODO: generalise to other metrics
@@ -720,12 +591,12 @@ class Driver(object):
                     for d in derivations:
                         fo.write('{0}\n'.format(lmap[d.tree.projection]))
         dt = time() - t0
-        logging.info('[%d]  computing loos took %s seconds', iteration, dt)
+        logging.info('[%s]  computing loos took %s seconds', run, dt)
         return L
 
-    def read_samples(self, iteration, alias):
-        samples_dir = '{0}/run{1}/{2}/samples'.format(self.workspace, iteration, alias)
-        logging.info('[%d] Reading samples (%s)...', iteration, alias)
+    def read_samples(self, run, alias):
+        samples_dir = '{0}/{1}/{2}/samples'.format(self.workspace, run, alias)
+        logging.info('[%s] Reading samples (%s)...', run, alias)
         input_files = list_numbered_files(samples_dir)
         S = []
         t0 = time()
@@ -734,5 +605,118 @@ class Driver(object):
             derivations, _qmap, _pmap = sampled_derivations_from_file(input_file)
             S.append(derivations)
         dt = time() - t0
-        logging.info('[%d]  reading samples took %f seconds', iteration, dt)
+        logging.info('[%s]  reading samples took %f seconds', run, dt)
         return S
+    
+    
+    def tune(self):
+
+        metric = self.args.metric
+        devset = self.devset
+    
+        run = RunCount()
+        Tp = self.args.Tp
+        Tq = self.args.Tq
+        pcooling = self.args.pcooling_lag
+        qcooling = self.args.qcooling_lag
+        
+        # Iteration 0 consists in assessing devtest with the initial weight vector
+        if self.args.resume == 0:
+            devtest_score = self.devtest_eval(run.iteration, samples=self.get_nsamples(0))
+            logging.info('[%d] Devtest eval (initialiser): %s', run.iteration, devtest_score)
+
+        for loop in range(1, self.args.maxiter + 1):  
+            run.next_run()
+            t0 = time()
+            # deal with sampling schedule
+            N = self.get_nsamples(run.iteration)
+            # deal with cooling schedule
+            if pcooling <= 0:
+                Tp /= self.args.pcooling_factor  # cool down
+                if Tp < self.args.minTp:  # ensure minimum temperature
+                    Tp = self.args.minTp
+                pcooling = self.args.pcooling_lag  # reset lag
+            pcooling -= 1
+            if qcooling <= 0:
+                Tq /= self.args.qcooling_factor  # cool down
+                if Tq < self.args.minTq:  # ensure minimum temperature
+                    Tq = self.args.minTq  
+                qcooling = self.args.qcooling_lag  # reset lag
+            qcooling -= 1
+            logging.info('[%d] Tp=%s Tq=%s', run.iteration, Tp, Tq)
+            # skip complete iterations
+            if loop < self.args.resume:
+                continue
+            path_to_run = '{0}/run{1}'.format(self.workspace, run.iteration)
+            mkdir(path_to_run)
+
+            # prepare a config file within run
+            self.update_config_file('config{0}.ini'.format(run.iteration - 1), 
+                    'run{0}/0.ini'.format(run.iteration))
+            # optimise coordinates
+            if self.args.order == 'pq':
+                S, L = self.coordinate_p(devset, run, shift=0, resample=True, N=N, Tp=Tp)
+                # we shift as many iterations as we had to run for P
+                self.coordinate_q(devset, run, shift=self.args.piter, resample=self.args.resample, N=N, Tq=Tq, S=S, L=L)
+            else:  # qp
+                S, L = self.coordinate_q(devset, run, shift=0, resample=True, N=N, Tq=Tq)
+                # we shift as many iterations as we had to run for Q
+                self.coordinate_p(devset, run, shift=self.args.qiter, resample=self.args.resample, N=N, Tp=Tp, S=S, L=L)
+            
+            # update the config that precedes this run
+            self.update_config_file('run{0}/{1}.ini'.format(run.iteration, self.args.piter + self.args.qiter), 
+                    'config{0}.ini'.format(run.iteration))
+            devtest_score = self.devtest_eval(run.iteration, samples=N)
+            logging.info('[%d] Devtest eval (end of iteration): %s', run.iteration, devtest_score)
+            dt = time() - t0
+            logging.info('[%d] Iteration took %s minutes', run.iteration, dt/60)
+
+    def coordinate_p(self, devset, run, shift, resample, N, Tp, S=None, L=None):
+        for i in range(1, self.args.piter + 1):
+            run.next_target()
+            # sample for dev (using the previous config file)
+            config = 'run{0}/{1}.ini'.format(run.iteration, i + shift - 1)
+            curr = 'run{0}/{1}'.format(run.iteration, i + shift)
+            if resample or i > 1:
+                samples_dir = self.sample(curr, self.args.dev_alias, config=config, samples=N)
+                if not os.path.isdir(samples_dir):
+                    raise Exception('[%s] could not find samples' % curr)
+                # eval dev set if necessary
+                if not self.args.no_eval_dev:
+                    self.decide(curr, self.args.dev_alias, config=config)
+                    dev_score = self.assess(curr, self.args.dev_alias)
+                    logging.info('[%s] Dev eval (begin of iteration): %s', curr, dev_score)
+                # load samples for optimisation
+                S = self.read_samples(curr, self.args.dev_alias)
+                # compute loss
+                L = self.training_loss(curr, self.args.dev_alias, segments=devset, samples=S)
+            # SGD
+            target_weights = self.optimise_target(run, devset, S, L, Tp, self.args.pL2)
+            self.wmap.target.update(target_weights)
+            self.update_config_file(config, 'run{0}/{1}.ini'.format(run.iteration, i + shift))
+        return S, L
+
+    def coordinate_q(self, devset, run, shift, resample, N, Tq, S=None, L=None):
+        for i in range(1, self.args.qiter + 1):
+            run.next_proxy()
+            # sample for dev (using the previous config file)
+            config = 'run{0}/{1}.ini'.format(run.iteration, i + shift - 1)
+            curr = 'run{0}/{1}'.format(run.iteration, i + shift)
+            if resample or i > 1:  # first itereation reuses from p unless the user wants to resample
+                samples_dir = self.sample(curr, self.args.dev_alias, config=config, samples=N)
+                if not os.path.isdir(samples_dir):
+                    raise Exception('[%s] could not find samples' % curr)
+                # eval dev set if necessary
+                if not self.args.no_eval_dev:
+                    self.decide(curr, self.args.dev_alias, config=config)
+                    dev_score = self.assess(curr, self.args.dev_alias)
+                    logging.info('[%s] Dev eval (begin of iteration): %s', curr, dev_score)
+                # load samples for optimisation
+                S = self.read_samples(curr, self.args.dev_alias)
+                # compute loss
+                L = self.training_loss(curr, self.args.dev_alias, segments=devset, samples=S)
+            # SGD
+            proxy_weights = self.optimise_proxy(run, devset, S, L, Tq, self.args.qL2, N)
+            self.wmap.proxy.update(proxy_weights)
+            self.update_config_file(config, 'run{0}/{1}.ini'.format(run.iteration, i + shift))
+        return S, L

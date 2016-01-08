@@ -15,12 +15,24 @@ def main(args, config):
 
 def cmd_optimisation(parser):
     # Optimisation
+    parser.add_argument("--maxiter", '-M', type=int, default=10,
+                        help="Maximum number of iterations")
+    parser.add_argument('--samples', type=int, nargs='+', default=[1000],
+            help='Sampling schedule: number of samples and number of iterations (multiple allowed)')
     parser.add_argument('--default', type=float, default=None,
                         help='initialise all weights with a default value, if not given, we start from the values already specified in the config file')
-    parser.add_argument("--order", type=str, default='pq', choices=['pq', 'qp'],
-            help="Order in which to optimise parameters: p then q, or q then p")
+    parser.add_argument("--resume", type=int, default=0,
+                        help="Resume from a certain iteration (requires the config file of the preceding run)")
+    parser.add_argument("--resample", action='store_true',
+            help="Whether or not to resample after optimising P and before optimising Q within an iteration of coordinate descent")
+    parser.add_argument("--piter", type=int, default=1,
+            help="Number of iterations optimising P before moving on to Q")
+    parser.add_argument("--qiter", type=int, default=1,
+            help="Number of iterations optimising Q after done with P")
     parser.add_argument("--qopt", type=str, default='minkl', choices=['minkl', 'maxelb', 'minvar'],
                         help="Optimisation method for instrumental distribution")
+    parser.add_argument("--order", type=str, default='pq', choices=['pq', 'qp'],
+            help="Order in which to optimise parameters: p then q, or q then p")
 
 def cmd_external(parser):
     parser.add_argument('--scoring-tool', type=str,
@@ -88,13 +100,7 @@ def argparse_and_config():
                         help="development set")
     parser.add_argument("--alias", type=str,
                         help="an alias for the experiment")
-    parser.add_argument("--maxiter", '-M', type=int, default=10,
-                        help="Maximum number of iterations")
-    parser.add_argument('--samples', type=int, nargs='+', default=[1000],
-            help='Sampling schedule: number of samples and number of iterations (multiple allowed)')
     parser.add_argument("--jobs", type=int, default=2, help="number of processes")
-    parser.add_argument("--resume", type=int, default=0,
-                        help="Resume from a certain iteration (requires the config file of the preceding run)")
     parser.add_argument('--dev-alias', type=str, default='dev',
             help='Change the alias of the dev set')
     parser.add_argument('--no-eval-dev', action='store_true', default=False,
@@ -106,9 +112,9 @@ def argparse_and_config():
     parser.add_argument("--devtest-grammar", type=str,
                         help="grammars for the devtest set")
     cmd_loss(parser.add_argument_group('Loss'))
-    cmd_optimisation(parser.add_argument_group('Parameter optimisation'))
-    cmd_target_sgd(parser.add_argument_group('Target distribution'))
-    cmd_instrumental_sgd(parser.add_argument_group('Instrumental distribution'))
+    cmd_optimisation(parser.add_argument_group('Parameter optimisation by coordinate descent'))
+    cmd_target_sgd(parser.add_argument_group('Target optimisation by SGD'))
+    cmd_instrumental_sgd(parser.add_argument_group('Instrumental optimisation by SGD'))
     cmd_external(parser.add_argument_group('External tools'))
     cmd_logging(parser.add_argument_group('Logging'))
     # General

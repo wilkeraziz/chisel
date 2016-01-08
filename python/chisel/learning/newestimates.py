@@ -79,14 +79,19 @@ def py(derivations, q_wmap, p_wmap, get_yield, empirical_q=True, alpha=1.0, beta
 
     return support, py, qy
 
-def minrisk(derivations, q_wmap, p_wmap, get_yield, empirical_q=True, alpha=1.0, beta=1.0):
+def minrisk(derivations, q_wmap, p_wmap, lmap, 
+        empirical_q=True, alpha=1.0, beta=1.0,
+        get_yield=lambda d: d.tree.projection):
     """
-    :param support: list of DerivationGroup objects, each of which represents derivations sharing the same yield (Dy)
-    :param p_features: list of features of the target
-    :param q_features: list of features of the proxy
-    :param get_yield: a function that returns the yield of a derivation
+    :param derivations: list of Derivation objects
+    :param q_wmap: proxy model
+    :param p_wmap: target model
+    :param lmap: losses mapped by yield
+    :param empirical_q: whether we should use empirical estimates derived from counts or approximated by renormalising the sample.
     :param alpha: p's dot scaling
     :param beta: q's dot scaling
+    :param get_yield: a function that returns the yield of a derivation
+    :returns: risk, risk derivatives, entropy, entropy derivatives
     """
     # 0) organise the support
 
@@ -159,9 +164,17 @@ def minrisk(derivations, q_wmap, p_wmap, get_yield, empirical_q=True, alpha=1.0,
     # entropy
     H = -(py * np.log(py)).sum(0)
     dH = -(dpdt * (np.log(py) + 1)[:,np.newaxis]).sum(0)
-    return support, py, dpdt, H, dH
 
-def maxelb(derivations, q_wmap, p_wmap, empirical_q=False):
+
+    # Risk and derivatives
+    losses = np.array([lmap[Dy.projection] for Dy in support], float)  # l(y)
+    risk = losses.dot(py.transpose())
+    dRisk = losses.dot(dpdt) 
+
+    return risk, dRisk, H, dH  #support, py, dpdt, H, dH
+
+def maxelb(derivations, q_wmap, p_wmap, lmap=None, empirical_q=False, alpha=1.0, beta=1.0,
+        get_yield=lambda d: d.tree.projection):
     # counts
     nd = np.array([d.count for d in derivations], float)
     # dot products
@@ -193,7 +206,8 @@ def maxelb(derivations, q_wmap, p_wmap, empirical_q=False):
     return ELB, dELB, H, dH
 
 
-def minkl(derivations, q_wmap, p_wmap, empirical_q=False):
+def minkl(derivations, q_wmap, p_wmap, lmap=None, empirical_q=False, alpha=1.0, beta=1.0, 
+        get_yield=lambda d: d.tree.projection):
     # counts
     nd = np.array([d.count for d in derivations], float)
     # dot products
@@ -227,6 +241,43 @@ def minkl(derivations, q_wmap, p_wmap, empirical_q=False):
     H, dH = entropy(q_dot, qd, log_qd, dqdl)
     return KL, dKL, H, dH
 
-def minvar(derivations, q_wmap, p_wmap, empirical_q=False, alpha=1.0, beta=1.0):
-    pass
+def minvar(derivations, q_wmap, p_wmap, lmap, empirical_q=False, alpha=1.0, beta=1.0, 
+        get_yield=lambda d: d.tree.projection):
+    # counts
+    nd = np.array([d.count for d in derivations], float)
+    # dot products
+    q_dot = np.array([fmap_dot(d.vector, q_wmap) for d in derivations])
+    p_dot = np.array([fmap_dot(d.vector, p_wmap) for d in derivations])
+    r_dot = p_dot - q_dot
 
+    # posterior
+    log_uqd = np.log(nd) + q_dot
+    log_qd = log_uqd - np.logaddexp.reduce(log_uqd)
+    qd = np.exp(log_qd)
+
+    # importance weight: r(d) = ur(d)/Zr
+    log_urd = r_dot + np.log(nd)
+    #log_rd = log_urd - np.logaddexp.reduce(log_urd)
+    #rd = np.exp(log_rd)
+    
+    # expected features
+    gd = np.array([d.vector.as_array(q_wmap.features) for d in derivations])
+    q_expected_g = (gd * qd[:,np.newaxis]).sum(0)
+
+    # derivatives of q
+    gdiff = gd - q_expected_g
+    dqdl = gdiff * qd[:,np.newaxis]
+
+    # loss
+    losses = np.array([lmap[get_yield(d)] for d in derivations], float)  # l(d)
+    
+    # cross entropy
+    exp_wloss = losses * np.exp(log_urd) * qd
+    #exp_wloss = losses * rd * qd
+    CE = -(exp_wloss * log_qd).sum()
+    dCE = -exp_wloss.transpose().dot(gdiff)  # equivalent to (G * R[:,np.newaxis]).sum(0)
+
+    # entropy
+    H, dH = entropy(q_dot, qd, log_qd, dqdl)
+    
+    return CE, dCE, H, dH
