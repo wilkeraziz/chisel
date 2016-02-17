@@ -427,7 +427,6 @@ class Driver(object):
                 for seg in devset:
                     print >> fi, seg.to_sgm(dump_refs=False)
                     print >> fr, ' ||| '.join(str(ref) for ref in seg.refs)
-
         return devset
     
     @staticmethod

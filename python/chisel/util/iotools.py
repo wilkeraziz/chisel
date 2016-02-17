@@ -95,16 +95,16 @@ class SegmentMetaData(object):
     def __str__(self):
         return 'grammar=%s\tsrc=%s' % (self.grammar_, self.src_)
 
-    def to_sgm(self, dump_refs=True):
+    def to_sgm(self, dump_refs=True, lc_input=False, lc_ref=False):
         if dump_refs and self.refs_:
             return '<seg grammar="{1}" id="{0}">{2}</seg> ||| {3}'.format(self.sid_,
                                                                           self.grammar_,
-                                                                          self.src_,
-                                                                          ' ||| '.join(str(ref) for ref in self.refs_))
+                                                                          self.src_ if not lc_input else str(self.src_).lower(),
+                                                                          ' ||| '.join(str(ref) if not lc_ref else str(ref).lower() for ref in self.refs_))
         else:
             return '<seg grammar="{1}" id="{0}">{2}</seg>'.format(self.sid_,
                                                                   self.grammar_,
-                                                                  self.src_)
+                                                                  self.src_ if not lc_input else str(self.src_).lower())
 
     @staticmethod
     def parse(line, mode, sid=None, grammar_dir=None):
