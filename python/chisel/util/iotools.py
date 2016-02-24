@@ -120,7 +120,10 @@ class SegmentMetaData(object):
             args['sid'] = sid
         # overrides grammar
         if grammar_dir is not None:
-            args['grammar'] = '{0}/grammar.{1}.gz'.format(grammar_dir, args['sid'])
+            grammar_path = '{0}/grammar.{1}'.format(grammar_dir, args['sid']) 
+            if not isfile(grammar_path): 
+                grammar_path += '.gz'
+            args['grammar'] = grammar_path
         # sanity checks
         if not isfile(args['grammar']):
             raise Exception('Grammar file not found: %s' % args['grammar'])

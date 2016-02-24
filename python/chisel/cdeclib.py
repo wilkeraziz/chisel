@@ -10,12 +10,16 @@ from chisel.util.iotools import smart_ropen
 def make_cdec_config_string(cdec_items, cdec_features_items):
     """
     Create the string equivalent of a cdec.ini
-    :param cdec_items: list of pairs in the section [cdec]
-    :param cdec_features_items: list of pairs in the section [cdec:features]
+    :param cdec_items: list of cdec.ini entries
+    :param cdec_features_items: list of [cdec:features] entries (for backward compatibility)
+        this lines are interpreted as A=B where A is the name of a cdec class that implements the feature function
+        and B is the string used to construct the feature function object
+        A=B gets converted to (cdec format): feature_function=A B
     :return str: the configuration string
     """
-    return '{0}\n{1}'.format('\n'.join('{0}={1}'.format(k, v) for k, v in cdec_items),
-                             '\n'.join('feature_function={0} {1}'.format(k, v) for k, v in cdec_features_items))
+    kvs = [line.split('=', 1) for line in cdec_features_items]
+    return '{0}\n{1}'.format('\n'.join(cdec_items),
+                             '\n'.join('feature_function={0} {1}'.format(k, v) for k, v in kvs))
 
 
 def create_decoder_from_files(cdec_ini, weights_file, scaling=1.0):

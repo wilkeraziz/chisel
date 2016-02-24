@@ -13,7 +13,7 @@ from chisel.util.iotools import read_sampled_derivations, read_block, list_numbe
 from chisel.decoder.estimates import EmpiricalDistribution
 from chisel.smt import groupby, KBestSolution
 from chisel.util import scaled_fmap, dict2str
-from chisel.util.config import section_literal_eval, configure
+from chisel.util.config import configure
 from chisel.util.wmap import WMap
 from chisel.util.iotools import smart_ropen, smart_wopen
 import chisel.mteval as mteval
@@ -169,20 +169,9 @@ def argparse_and_config():
 def main():
     options, config = argparse_and_config()
 
-    # parameters of the instrumental distribution
-#    proxy_weights = scaled_fmap(section_literal_eval(config.items('proxy')), options.proxy_scaling)
-#    proxy_wmap = WMap(proxy_weights.iteritems())
-    #logging.debug('proxy (scaling=%f): %s', options.proxy_scaling, dict2str(proxy_weights, sort=True))
-#    logging.debug('proxy (scaling=%f): %s', options.proxy_scaling, str(proxy_wmap))
-
-    # parameters of the target distribution
-#    target_weights = scaled_fmap(section_literal_eval(config.items('target')), options.target_scaling)
-#    target_wmap = WMap(target_weights.iteritems())
-#    logging.debug('target (scaling=%f): %s', options.target_scaling, str(target_wmap))
-
     # loads mteval modules
     if config.has_section('chisel:metrics'):
-        metrics_map = section_literal_eval(config.items('chisel:metrics'))
+        metrics_map = dict(config.items('chisel:metrics'))
     else:
         metrics_map = {'bleu': 'chisel.mteval.bleu'}
     mteval.load(metrics_map, frozenset([options.metric]))
@@ -192,7 +181,7 @@ def main():
 
     # configure mteval metrics
     if config.has_section('chisel:metrics:config'):
-        metrics_config = section_literal_eval(config.items('chisel:metrics:config'))
+        metrics_config = dict(config.items('chisel:metrics:config'))
     else:
         metrics_config = {}
     logging.debug('chisel:metrics:config: %s', metrics_config)

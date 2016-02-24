@@ -13,7 +13,6 @@ from collections import namedtuple, deque
 from multiprocessing import Pool
 from time import time, strftime
 from scipy.optimize import minimize
-from ConfigParser import RawConfigParser
 from functools import partial
 
 from chisel.learning import risk, divergence
@@ -22,7 +21,7 @@ from chisel.util.wmap import WMap, JointWMap
 from chisel.util import scaled_fmap, npvec2str
 from chisel.util.iotools import SegmentMetaData, list_numbered_files, smart_ropen, smart_wopen
 from chisel.util.iotools import sampled_derivations_from_file
-from chisel.util.config import configure, section_literal_eval
+from chisel.util.config import configure, Config
 from chisel.learning.divergence import KLDriver
 import chisel.learning.newestimates as optalg
 from chisel.mteval.fast_bleu import TrainingBLEU
@@ -114,24 +113,25 @@ class Driver(object):
         logging.info('Optimisation took %s minutes', dt/60)
 
     def update_config_file(self, before, after, proxy_scaling=None, target_scaling=None, proxy=None, target=None):
-        config = RawConfigParser()
-        config.optionxform = str
+        config_path = '{0}/{1}'.format(self.workspace, before)
+        if not os.path.exists(config_path):
+            raise IOError('Perhaps iteration %s did not complete successfully?' % path)
         
-        try:
-            config.read('{0}/{1}'.format(self.workspace, before))
-        except IOError as e:
-            logging.error('Perhaps iteration %s did not complete successfully', before)
-            raise e
+        config = Config(config_path)
 
+        config.add_section('chisel:model')
         if proxy_scaling is not None:
             config.set('chisel:model', 'proxy_scaling', proxy_scaling)
         if target_scaling is not None:
             config.set('chisel:model', 'target_scaling', target_scaling)
 
+        config.add_section('proxy')
         if proxy is None:
             [config.set('proxy', f, v) for f, v in self.wmap.proxy.iteritems()]
         else:
             [config.set('proxy', f, v) for f, v in proxy.iteritems()]
+
+        config.add_section('target')
         if target is None:
             [config.set('target', f, v) for f, v in self.wmap.target.iteritems()]
         else:
@@ -152,21 +152,15 @@ class Driver(object):
         """
         
         # load a given configuration file (with weights)
-        config = RawConfigParser()
-        config.optionxform = str
         if not os.path.exists(path):
             raise IOError('Config file not found: %s\nPerhaps you used --resume incorrectly?' % path)
-        try:
-            config.read(path)
-        except IOError as e:
-            logging.error('Perhaps iteration %d did not complete successfully', number)
-            raise e
+        config = Config(path)
     
         # parameters of the instrumental distribution
-        proxy_weights = scaled_fmap(section_literal_eval(config.items('proxy')))
+        proxy_weights = scaled_fmap(config.items('proxy'))
 
         # parameters of the target distribution
-        target_weights = scaled_fmap(section_literal_eval(config.items('target')))
+        target_weights = scaled_fmap(config.items('target'))
 
         return JointWMap(WMap(sorted(proxy_weights.iteritems(), key=lambda (k, v): k)),
                 WMap(sorted(target_weights.iteritems(), key=lambda (k, v): k)))
@@ -352,12 +346,12 @@ class Driver(object):
         Produces: wmap
         """
         # parameters of the instrumental distribution
-        proxy_weights = scaled_fmap(section_literal_eval(config.items('proxy')))
+        proxy_weights = scaled_fmap(config.items('proxy'))
         if default is not None:
             proxy_weights = {k: default for k, v in proxy_weights.iteritems()}
 
         # parameters of the target distribution
-        target_weights = scaled_fmap(section_literal_eval(config.items('target')))
+        target_weights = scaled_fmap(config.items('target'))
         if default is not None:
             target_weights = {k: default for k, v in target_weights.iteritems()}
 
@@ -391,13 +385,11 @@ class Driver(object):
 
     @staticmethod
     def _BASE_CONFIG_(config, workspace, proxy_wmap, target_wmap):
-        if config.has_section('proxy'):
-            config.remove_section('proxy')
+        config.remove_section('proxy')
         config.add_section('proxy')
         [config.set('proxy', f, v) for f, v in proxy_wmap.iteritems()]
         
-        if config.has_section('target'):
-            config.remove_section('target')
+        config.remove_section('target')
         config.add_section('target')
         [config.set('target', f, v) for f, v in target_wmap.iteritems()]
         
@@ -412,7 +404,7 @@ class Driver(object):
         logging.info('Reading %s set: %s', alias, path)
         if grammar_dir is None:
             if config.has_section('chisel:sampler'):
-                sampler_map = section_literal_eval(config.items('chisel:sampler'))
+                sampler_map = dict(config.items('chisel:sampler'))
                 grammar_dir = sampler_map.get('grammars', None)
         with smart_ropen(path) as f:
             devset = [SegmentMetaData.parse(line.strip(),
@@ -433,7 +425,7 @@ class Driver(object):
     def _LOAD_METRIC_(config, metric):
         # loads mteval modules
         if config.has_section('chisel:metrics'):
-            metrics_map = section_literal_eval(config.items('chisel:metrics'))
+            metrics_map = dict(config.items('chisel:metrics'))
         else:
             metrics_map = {'bleu': 'chisel.mteval.bleu'}
         mteval.load(metrics_map, frozenset([metric]))
@@ -443,7 +435,7 @@ class Driver(object):
 
         # configure mteval metrics
         if config.has_section('chisel:metrics:config'):
-            metrics_config = section_literal_eval(config.items('chisel:metrics:config'))
+            metrics_config = dict(config.items('chisel:metrics:config'))
         else:
             metrics_config = {}
         logging.debug('chisel:metrics:config: %s', metrics_config)

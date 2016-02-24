@@ -6,7 +6,10 @@ import numpy as np
 
 def scaled_fmap(fmap, scaling=1.0):
     """Returns a feature map scaled by a constant"""
-    return {k: v*scaling for k, v in fmap.iteritems()}
+    if type(fmap) is dict:
+        return {k: v*scaling for k, v in fmap.iteritems()}
+    else:
+        return {k: v*scaling for k, v in fmap}
 
 
 def fmap_dot(fmap, wmap):

@@ -14,7 +14,7 @@ from chisel.util.iotools import read_sampled_derivations, read_block, list_numbe
 from chisel.decoder.estimates import EmpiricalDistribution
 from chisel.smt import groupby, KBestSolution
 from chisel.util import scaled_fmap, dict2str
-from chisel.util.config import section_literal_eval, configure
+from chisel.util.config import configure
 from chisel.util.wmap import WMap
 from chisel.util.iotools import smart_ropen, smart_wopen
 from chisel.learning.newestimates import py

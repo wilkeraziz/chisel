@@ -12,13 +12,12 @@ from multiprocessing import Pool
 from time import time, strftime
 from scipy.optimize import minimize
 
-from ConfigParser import RawConfigParser
 from functools import partial
 from chisel.util.wmap import WMap, JointWMap
 from chisel.learning import risk, divergence
 from chisel.util import scaled_fmap, npvec2str
 from chisel.util.iotools import SegmentMetaData, list_numbered_files
-from chisel.util.config import configure, section_literal_eval
+from chisel.util.config import Config
 
 
 def wrapped_divergence(job, iteration, q_wmap, p_wmap, sample_headers, save_to=None):
@@ -99,19 +98,19 @@ class KLDriver(object):
         return '{0}/run{1}'.format(self.path_to_kl(), self.kl_iteration)
 
     def update_config_file(self, proxy_scaling=1.0, target_scaling=1.0):
-        config = RawConfigParser()
-        config.optionxform = str
 
-        try:
-            config.read(self.path_to_config(self.iteration - 1))
-        except IOError as e:
-            logging.error('[%d/%d] perhaps the previous iteration did not complete successfully', self.parent_iteration, self.iteration)
-            raise e
+        if not os.path.exists(self.path_to_config(self.iteration - 1)):
+            raise IOError('Perhaps iteration %s did not complete successfully?' % path)
 
+        config = Config(self.path_to_config(self.iteration - 1))
+
+        config.add_section('chisel:model')
         config.set('chisel:model', 'proxy_scaling', proxy_scaling)
         config.set('chisel:model', 'target_scaling', target_scaling)
 
+        config.add_section('proxy')
         [config.set('proxy', f, v) for f, v in self.wmap.proxy.iteritems()]
+        config.add_section('target')
         [config.set('target', f, v) for f, v in self.wmap.target.iteritems()]
     
         with open('{0}/config{1}.ini'.format(self.workspace, self.iteration), 'wb') as fo:
@@ -292,9 +291,9 @@ class KLDriver(object):
         Produces: wmap
         """
         # parameters of the instrumental distribution
-        proxy_weights = scaled_fmap(section_literal_eval(config.items('proxy')))
+        proxy_weights = scaled_fmap(config.items('proxy'))
         # parameters of the target distribution
-        target_weights = scaled_fmap(section_literal_eval(config.items('target')))
+        target_weights = scaled_fmap(config.items('target'))
 
         return JointWMap(WMap(sorted(proxy_weights.iteritems(), key=lambda (k, v): k)),
                 WMap(sorted(target_weights.iteritems(), key=lambda (k, v): k)))
@@ -314,13 +313,11 @@ class KLDriver(object):
 
     @staticmethod
     def _BASE_CONFIG_(config, workspace, proxy_wmap, target_wmap):
-        if config.has_section('proxy'):
-            config.remove_section('proxy')
+        config.remove_section('proxy')
         config.add_section('proxy')
         [config.set('proxy', f, v) for f, v in proxy_wmap.iteritems()]
         
-        if config.has_section('target'):
-            config.remove_section('target')
+        config.remove_section('target')
         config.add_section('target')
         [config.set('target', f, v) for f, v in target_wmap.iteritems()]
         

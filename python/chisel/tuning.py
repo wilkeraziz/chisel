@@ -7,7 +7,7 @@ import argparse
 import logging
 import sys
 from chisel.learning.newdriver import Driver
-from chisel.util.config import section_literal_eval, configure
+from chisel.util.config import configure
 
 
 def main(args, config):
@@ -131,6 +131,7 @@ def argparse_and_config():
     # reconfig based on command line overrides
     # 1) samples
     # config.set('chisel:sampler', 'samples', repr(args.samples))
+    config.add_section('chisel:sampler')
     config.set('chisel:sampler', 'jobs', repr(args.jobs))
     # 2) decision
     config.set('chisel:decision', 'metric', repr(args.metric))
@@ -146,8 +147,7 @@ def argparse_and_config():
         config.add_section('chisel:metrics')
         config.set('chisel:metrics', 'bleu', repr('chisel.mteval.bleu'))
     # 4) learning
-    if not config.has_section('chisel:learning'):
-        config.add_section('chisel:learning')
+    config.add_section('chisel:learning')
     config.set('chisel:learning', 'metric', repr(args.metric))
     config.set('chisel:learning', 'samples', repr(args.samples))
     #config.set('chisel:learning', 'nbest', repr(args.nbest))

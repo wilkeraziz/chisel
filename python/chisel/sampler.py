@@ -13,13 +13,13 @@ from tabulate import tabulate
 from time import time
 from multiprocessing import Pool
 from functools import partial
-from ConfigParser import RawConfigParser
 import chisel.ff as ff
+import chisel.ffpp.manager as ffpp
 import chisel.cdeclib as cdeclib
 import numpy as np
 from chisel.util import fpairs2str, dict2str, fmap_dot, scaled_fmap
 from chisel.util import resample as do_resample
-from chisel.util.config import configure, section_literal_eval
+from chisel.util.config import configure
 from chisel.util.iotools import SegmentMetaData
 from chisel.smt import SVector, Tree, Derivation
 from chisel.instrumental import Sampler, KLOptimiser
@@ -73,11 +73,12 @@ def argparse_and_config():
                         choices=['n', 'p', 'q', 'r', 'nr'],
                         help='sort results by a specific column')
     parser.add_argument('--verbose', '-v',
-                        action='store_true',
+                        action='count',
                         help='increases verbosity')
     parser.add_argument('--tune', '-T',
                         action='store_true',
                         help='Tune the proxy distribution')
+
 
     args, config, failed = configure(parser,
                                      set_defaults=['chisel:model', 'chisel:sampler'],
@@ -125,35 +126,50 @@ def main():
     logging.info('Writing samples to: %s', output_dir)
 
     # cdec configuration string
+    # TODO: I need to allow duplicates in cdec-features, currently duplicates overwrite each other
+    # perhaps the easiest to do is to separate cdec-features from chisel.ini
     cdec_cfg_string = cdeclib.make_cdec_config_string(config.items('cdec'), config.items('cdec:features'))
     logging.debug('cdec.ini: %s', repr(cdec_cfg_string))
 
     # parameters of the instrumental distribution
-    proxy_weights = scaled_fmap(section_literal_eval(config.items('proxy')), options.proxy_scaling)
+    proxy_weights = scaled_fmap(config.items('proxy'), options.proxy_scaling)
     logging.debug('proxy (scaling=%f): %s', options.proxy_scaling, dict2str(proxy_weights, sort=True))
 
     # parameters of the target distribution
-    target_weights = scaled_fmap(section_literal_eval(config.items('target')), options.target_scaling)
+    target_weights = scaled_fmap(config.items('target'), options.target_scaling)
     logging.debug('target (scaling=%f): %s', options.target_scaling, dict2str(target_weights, sort=True))
 
     # loads scorer modules
     if config.has_section('chisel:scorers'):
-        scorers_map = section_literal_eval(config.items('chisel:scorers'))
-        ff.load_scorers(scorers_map.itervalues())
+        ff.load_scorers(config.items('chisel:scorers'))
 
     # scorers' configuration
     if config.has_section('chisel:scorers:config'):
-        scorers_config = section_literal_eval(config.items('chisel:scorers:config'))
+        scorers_config = dict(config.items('chisel:scorers:config'))
     else:
         scorers_config = {}
-    logging.info('chisel:scorers:config: %s', scorers_config)
+    logging.debug('chisel:scorers:config: %s', scorers_config)
+    # configure scorers
+    ff.configure_scorers(scorers_config)
 
+    
+    # FF++: an improved FF framework
+    # 1. load implementations
+    if config.has_section('chisel:scorers++'):
+        scorerspp_map = dict(config.items('chisel:scorers++'))
+        ffpp.load_scorers(scorerspp_map.iteritems())
+    # 2. config scorers
+    if config.has_section('chisel:scorers++:config'):
+        scorerspp_config = dict(config.items('chisel:scorers++:config'))
+    else:
+        scorerspp_config = {}
+    logging.info('chisel:scorers++:config: %s', scorerspp_config)
+    ffpp.configure_scorers(scorerspp_config)
+    # FF++ done
+    
     # logs which features were added to the proxy
     extra_features = {k: v for k, v in target_weights.iteritems() if k not in proxy_weights}
     logging.debug('Extra features: %s', extra_features)
-
-    # configure scorers
-    ff.configure_scorers(scorers_config)
 
     # reads segments from input
     segments = [SegmentMetaData.parse(line.strip(),

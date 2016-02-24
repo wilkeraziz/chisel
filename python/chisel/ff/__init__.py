@@ -28,6 +28,7 @@ import sys
 import os
 import itertools
 import importlib
+import chisel.ffpp.manager as ffpp
 
 
 _SINGLE_ = []  # (func, fname)
@@ -39,12 +40,18 @@ _RESET_ = []
 _SUFFSTATS_ = []
 _CLEANUP_ = []
 
+
+
 # available decorators
 
 
 def configure(func):
     """decorate func with ff.configure if you want to configure your ff when the decoder is loaded"""
     _CONFIGURE_.append(func)
+    return func
+
+def configure2(func):
+    """decorate func with ff.configure if you want to configure your ff when the decoder is loaded"""
     return func
 
 
@@ -121,7 +128,7 @@ def sparse(scorer):
 # The following functions are not supposed to be used as decorators
 
 def load_scorers(scorers):
-    for fdef in scorers:
+    for fname, fdef in scorers:
         if os.path.isfile(fdef):
             try:
                 logging.info('Loading additional feature definitions from file %s', fdef)
@@ -147,33 +154,35 @@ def configure_scorers(config):
 def preprocess_input(segment):
     """preprocess input"""
     [func(segment) for func in _PREPROCESS_]
+    ffpp.preprocess_input(segment)
 
 
 def reset_scorers():
     """resets scorers to a null state"""
     [func() for func in _RESET_]
+    ffpp.reset_scorers()
 
 
-def compute_features(hyps):
+def compute_features(hyp):
     """
     compute_features(hypothesis) -> list of named feature values (i.e. pairs of the kind (fname, fvalue))
     """
     # 1) give scorers the chance to prepare some sufficient statistics
-    [func(hyps) for func in _SUFFSTATS_]
+    [func(hyp) for func in _SUFFSTATS_]
     # 2) evaluate scorers
     pairs = []
     # a) all single features (return 1 real value)
-    pairs.extend((fname, fvalue) for fname, fvalue in ((fname, func(hyps)) for func, fname in _SINGLE_) if fvalue)
+    pairs.extend((fname, fvalue) for fname, fvalue in ((fname, func(hyp)) for func, fname in _SINGLE_) if fvalue)
     #  b) all multiple dense features (return a list of pairs (fname, fvalue))
     for func, fnames in _MULTIPLE_DENSE_:
-        fvalues = func(hyps)
+        fvalues = func(hyp)
         assert len(fnames) == len(fvalues), 'expected %d features, found %d' % (len(fnames), len(fvalues))
         pairs.extend((fname, fvalue) for fname, fvalue in itertools.izip(fnames, fvalues) if fvalue)
     #  c) all sparse features (return a list of pair (fsuffix, fvalue))
     for func, fprefix in _SPARSE_:
-        pairs.extend(('{0}_{1}'.format(fprefix, fsuffix), fvalue) for fsuffix, fvalue in func(hyps) if fvalue)
+        pairs.extend(('{0}_{1}'.format(fprefix, fsuffix), fvalue) for fsuffix, fvalue in func(hyp) if fvalue)
     # 3) give ffs the chance to clean up
     [func() for func in _CLEANUP_]
 
-    return pairs
+    return ffpp.compute_features(hyp, pairs)
 

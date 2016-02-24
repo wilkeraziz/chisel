@@ -23,7 +23,6 @@ import chisel.cdeclib as cdeclib
 from chisel.util import obj2id 
 from chisel.util import fpairs2str, dict2str, fmap_dot, scaled_fmap
 from chisel.util import resample as do_resample
-from chisel.util.config import configure, section_literal_eval
 from chisel.util.iotools import SegmentMetaData, smart_ropen, smart_wopen
 from chisel.smt import SVector, Tree, Derivation
 from chisel.util.logtools import timethis
