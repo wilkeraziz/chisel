@@ -101,12 +101,12 @@ class Driver(object):
             logging.info('Loading model %s', '{1}/config{1}.ini'.format(self.workspace, args.resume - 1))
             self.wmap = self.configure('{0}/config{1}.ini'.format(self.workspace, args.resume - 1))
 
-        self.devset = Driver._PREPARE_DEVSET_(self.workspace, self.args.dev, config, alias=self.args.dev_alias)
+        self.devset = Driver._PREPARE_DEVSET_(self.workspace, self.args.dev, config, alias=self.args.dev_alias, grammar_dir=args.dev_grammars)
         self.devtest = None
         if args.devtest:  # load devtest set if given
-            self.devtest = Driver._PREPARE_DEVSET_(self.workspace, self.args.devtest, config, alias=self.args.devtest_alias, grammar_dir=args.devtest_grammar)
+            self.devtest = Driver._PREPARE_DEVSET_(self.workspace, self.args.devtest, config, alias=self.args.devtest_alias, grammar_dir=args.devtest_grammars)
 
-        Driver._LOAD_METRIC_(self.config, self.args.metric)
+        #Driver._LOAD_METRIC_(self.config, self.args.metric)
         t0 = time()
         self.tune()
         dt = time() - t0
@@ -359,8 +359,8 @@ class Driver(object):
         if overwrite_q:
             proxy_weights = {f: target_weights[f] for f, v in proxy_weights.iteritems()}
 
-        if len(frozenset(proxy_weights.iterkeys()) - frozenset(target_weights.iterkeys())) > 0:
-            raise ValueError('The features in q(d) should be a subset of the features in p(d)')
+        #if len(frozenset(proxy_weights.iterkeys()) - frozenset(target_weights.iterkeys())) > 0:
+        #    raise ValueError('The features in q(d) should be a subset of the features in p(d)')
 
         return JointWMap(WMap(sorted(proxy_weights.iteritems(), key=lambda (k, v): k)),
                 WMap(sorted(target_weights.iteritems(), key=lambda (k, v): k)))
@@ -402,10 +402,10 @@ class Driver(object):
     def _PREPARE_DEVSET_(workspace, path, config, alias='dev', input_format='cdec', grammar_dir=None):
         # load dev set and separate input and references
         logging.info('Reading %s set: %s', alias, path)
-        if grammar_dir is None:
-            if config.has_section('chisel:sampler'):
-                sampler_map = dict(config.items('chisel:sampler'))
-                grammar_dir = sampler_map.get('grammars', None)
+        #if grammar_dir is None:
+        #    if config.has_section('chisel:sampler'):
+        #        sampler_map = dict(config.items('chisel:sampler'))
+        #        grammar_dir = sampler_map.get('grammars', None)
         with smart_ropen(path) as f:
             devset = [SegmentMetaData.parse(line.strip(),
                                               input_format,
@@ -449,7 +449,7 @@ class Driver(object):
                 self.args.devtest_alias, 
                 config='config{0}.ini'.format(iteration), 
                 samples=samples, 
-                grammar=self.args.devtest_grammar)
+                grammar=self.args.devtest_grammars)
         self.decide('run{0}'.format(iteration), 
                 self.args.devtest_alias, 
                 config='config{0}.ini'.format(iteration))
@@ -669,7 +669,7 @@ class Driver(object):
             config = 'run{0}/{1}.ini'.format(run.iteration, i + shift - 1)
             curr = 'run{0}/{1}'.format(run.iteration, i + shift)
             if resample or i > 1:
-                samples_dir = self.sample(curr, self.args.dev_alias, config=config, samples=N)
+                samples_dir = self.sample(curr, self.args.dev_alias, config=config, samples=N, grammar=self.args.dev_grammars)
                 if not os.path.isdir(samples_dir):
                     raise Exception('[%s] could not find samples' % curr)
                 # eval dev set if necessary
@@ -694,7 +694,7 @@ class Driver(object):
             config = 'run{0}/{1}.ini'.format(run.iteration, i + shift - 1)
             curr = 'run{0}/{1}'.format(run.iteration, i + shift)
             if resample or i > 1:  # first itereation reuses from p unless the user wants to resample
-                samples_dir = self.sample(curr, self.args.dev_alias, config=config, samples=N)
+                samples_dir = self.sample(curr, self.args.dev_alias, config=config, samples=N, grammar=self.args.dev_grammars)
                 if not os.path.isdir(samples_dir):
                     raise Exception('[%s] could not find samples' % curr)
                 # eval dev set if necessary

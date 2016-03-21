@@ -6,11 +6,22 @@
 import argparse
 import logging
 import sys
+import os
 from chisel.learning.newdriver import Driver
 from chisel.util.config import configure
 
 
 def main(args, config):
+    if not os.path.exists(args.dev):
+        raise IOError('Dev set not found: %s' % args.dev)
+    if args.dev_grammars and not os.path.exists(args.dev_grammars):
+        raise IOError('Repository of grammars for dev set not found: %s' % args.dev_grammars)
+    if args.devtest and not os.path.exists(args.devtest):
+        raise IOError('Devtest set not found: %s' % args.devtest)
+    if args.devtest_grammars and not os.path.exists(args.devtest_grammars):
+        raise IOError('Repository of grammars for devtest set not found: %s' % args.devtest_grammars)
+    if not os.path.exists(args.scoring_tool):
+        raise IOError('Scoring tool not found: %s' % args.scoring_tool)
     driver = Driver(*argparse_and_config())
 
 def cmd_optimisation(parser):
@@ -103,14 +114,16 @@ def argparse_and_config():
     parser.add_argument("--jobs", type=int, default=2, help="number of processes")
     parser.add_argument('--dev-alias', type=str, default='dev',
             help='Change the alias of the dev set')
+    parser.add_argument("--dev-grammars", type=str,
+                        help="grammars for the dev set (overwrites input sgml markup)")
     parser.add_argument('--no-eval-dev', action='store_true', default=False,
             help='Do not assess the dev set at the beginning of an iteration')
     parser.add_argument("--devtest", type=str,
                         help="devtest set")
     parser.add_argument('--devtest-alias', type=str, default='devtest',
             help='Change the alias of the devtest set')
-    parser.add_argument("--devtest-grammar", type=str,
-                        help="grammars for the devtest set")
+    parser.add_argument("--devtest-grammars", type=str,
+                        help="grammars for the devtest set (overwrites input sgml markup)")
     cmd_loss(parser.add_argument_group('Loss'))
     cmd_optimisation(parser.add_argument_group('Parameter optimisation by coordinate descent'))
     cmd_target_sgd(parser.add_argument_group('Target optimisation by SGD'))
